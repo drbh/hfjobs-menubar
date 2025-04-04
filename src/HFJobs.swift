@@ -93,7 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pollingIntervalMenuItem = NSMenuItem(title: "Polling Interval", action: nil, keyEquivalent: "")
         let pollingIntervalSubmenu = NSMenu()
         
-        let intervals = [15, 30, 60, 120, 300]
+        let intervals = [5, 15, 30, 60, 120, 300]
         let currentInterval = UserDefaults.standard.integer(forKey: pollingIntervalKey)
         
         for interval in intervals {
@@ -197,82 +197,146 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc func pollJobStatus() {
+        print("Polling for job status changes...")
+        
         fetchJobs { [weak self] jobs in
-            guard let self = self, let jobs = jobs else { return }
+            guard let self = self else { return }
             
             DispatchQueue.main.async {
-                // Compare new jobs with cached jobs to detect status changes
+                guard let jobs = jobs else {
+                    print("Failed to fetch jobs during polling")
+                    return
+                }
+                
+                // Always update the UI when new jobs are fetched
+                // This ensures the UI stays in sync with the actual data
+                self.updateJobsUI(jobs: jobs)
+                
+                // Detect status changes for notifications
                 self.detectStatusChanges(oldJobs: self.cachedJobs, newJobs: jobs)
                 
-                // Update the cached jobs
+                // Update the cached jobs after checking for changes
                 self.cachedJobs = jobs
             }
         }
     }
-    
-    func detectStatusChanges(oldJobs: [HFJob], newJobs: [HFJob]) {
-        // Create dictionaries for fast lookup
-        let oldJobsDict = Dictionary(uniqueKeysWithValues: oldJobs.map { ($0.id, $0) })
-        var statusChanged = false
+
+
+    func updateJobsUI(jobs: [HFJob]) {
+        // Clear the submenu
+        jobsSubmenu.removeAllItems()
         
-        for newJob in newJobs {
-            // Get a meaningful job name
-            let jobName = getJobDisplayName(job: newJob)
-            
-            // Check if job existed before
-            if let oldJob = oldJobsDict[newJob.id] {
-                // Check if status changed
-                if oldJob.status.stage != newJob.status.stage {
-                    // Status changed, send notification
-                    statusChanged = true
-                    let title = "Job Status Changed"
-                    let body = "Job '\(jobName)' changed from \(oldJob.status.stage) to \(newJob.status.stage)"
-                    showNotification(title: title, body: body)
-                }
-            } else if newJob.status.stage == "RUNNING" {
-                // New running job
-                statusChanged = true
-                let title = "New Job Started"
-                let body = "Job '\(jobName)' has started running"
-                showNotification(title: title, body: body)
-            }
+        if jobs.isEmpty {
+            jobsSubmenu.addItem(NSMenuItem(title: "No jobs found", action: nil, keyEquivalent: ""))
+            return
         }
         
-        // Check for completed or failed jobs that weren't in that state before
-        for oldJob in oldJobs {
-            // Get a meaningful job name
-            let jobName = getJobDisplayName(job: oldJob)
-            
-            if let newJob = newJobs.first(where: { $0.id == oldJob.id }) {
-                // Job still exists, check for terminal states
-                if newJob.status.stage == "COMPLETED" && oldJob.status.stage != "COMPLETED" {
-                    statusChanged = true
-                    let title = "Job Completed"
-                    let body = "Job '\(jobName)' has completed successfully"
-                    showNotification(title: title, body: body)
-                } else if newJob.status.stage == "ERROR" && oldJob.status.stage != "ERROR" {
-                    statusChanged = true
-                    let title = "Job Failed"
-                    let body = "Job '\(jobName)' has failed with an error"
-                    showNotification(title: title, body: body)
+        // Group jobs by state
+        let runningJobs = jobs.filter { $0.status.stage == "RUNNING" }
+        let completedJobs = jobs.filter { $0.status.stage == "COMPLETED" }
+        let errorJobs = jobs.filter { $0.status.stage == "ERROR" }
+        let otherJobs = jobs.filter { !["RUNNING", "COMPLETED", "ERROR"].contains($0.status.stage) }
+        
+        // Add sections for each state
+        addJobsSection(title: "Running Jobs", jobs: runningJobs, to: jobsSubmenu)
+        if !runningJobs.isEmpty && (!completedJobs.isEmpty || !errorJobs.isEmpty || !otherJobs.isEmpty) {
+            jobsSubmenu.addItem(NSMenuItem.separator())
+        }
+        
+        addJobsSection(title: "Completed Jobs", jobs: completedJobs, to: jobsSubmenu)
+        if !completedJobs.isEmpty && (!errorJobs.isEmpty || !otherJobs.isEmpty) {
+            jobsSubmenu.addItem(NSMenuItem.separator())
+        }
+        
+        addJobsSection(title: "Failed Jobs", jobs: errorJobs, to: jobsSubmenu)
+        if !errorJobs.isEmpty && !otherJobs.isEmpty {
+            jobsSubmenu.addItem(NSMenuItem.separator())
+        }
+        
+        addJobsSection(title: "Other Jobs", jobs: otherJobs, to: jobsSubmenu)
+    }
+
+        
+    func detectStatusChanges(oldJobs: [HFJob], newJobs: [HFJob]) {
+        print("Checking for status changes between \(oldJobs.count) old jobs and \(newJobs.count) new jobs")
+        
+        // Create dictionaries for quick lookup
+        let oldJobsDict = Dictionary(uniqueKeysWithValues: oldJobs.map { ($0.id, $0) })
+        let newJobsDict = Dictionary(uniqueKeysWithValues: newJobs.map { ($0.id, $0) })
+        
+        // Check for status changes in existing jobs
+        for (jobId, oldJob) in oldJobsDict {
+            if let newJob = newJobsDict[jobId] {
+                // Job still exists - check if status changed
+                if oldJob.status.stage != newJob.status.stage {
+                    let jobName = getJobDisplayName(job: newJob)
+                    print("Status change detected: \(jobId) changed from \(oldJob.status.stage) to \(newJob.status.stage)")
+                    
+                    showNotification(
+                        title: "Job Status Changed",
+                        body: "Job '\(jobName)' changed from \(oldJob.status.stage) to \(newJob.status.stage)"
+                    )
+                    
+                    // Special notification for completion
+                    if newJob.status.stage == "COMPLETED" {
+                        print("Job completed: \(jobId)")
+                        showNotification(
+                            title: "✅ Job Completed",
+                            body: "Job '\(jobName)' has completed successfully"
+                        )
+                    }
+                    
+                    // Special notification for errors
+                    if newJob.status.stage == "ERROR" {
+                        print("Job failed: \(jobId)")
+                        let errorMessage = newJob.status.message ?? "Unknown error"
+                        showNotification(
+                            title: "❌ Job Failed",
+                            body: "Job '\(jobName)' failed: \(errorMessage)"
+                        )
+                    }
                 }
             } else {
                 // Job disappeared from the list
-                statusChanged = true
-                let title = "Job Removed"
-                let body = "Job '\(jobName)' is no longer in the job list"
-                showNotification(title: title, body: body)
+                let jobName = getJobDisplayName(job: oldJob)
+                print("Job disappeared: \(jobId) (previous status: \(oldJob.status.stage))")
+                
+                // If the job was running and disappeared, it likely completed
+                if oldJob.status.stage == "RUNNING" {
+                    showNotification(
+                        title: "✅ Job Likely Completed",
+                        body: "Running job '\(jobName)' is no longer in the list (likely completed)"
+                    )
+                } else {
+                    showNotification(
+                        title: "Job Removed",
+                        body: "Job '\(jobName)' is no longer in the job list"
+                    )
+                }
             }
         }
         
-        // If any job status changed, update the menu
-        if statusChanged {
-            DispatchQueue.main.async {
-                self.loadJobs()
+        // Check for new jobs
+        for (jobId, newJob) in newJobsDict {
+            if oldJobsDict[jobId] == nil {
+                let jobName = getJobDisplayName(job: newJob)
+                print("New job detected: \(jobId) with status \(newJob.status.stage)")
+                
+                if newJob.status.stage == "RUNNING" {
+                    showNotification(
+                        title: "🟢 New Job Started",
+                        body: "Job '\(jobName)' has started running"
+                    )
+                } else {
+                    showNotification(
+                        title: "New Job Added",
+                        body: "Job '\(jobName)' added with status: \(newJob.status.stage)"
+                    )
+                }
             }
         }
     }
-    
+
     func getJobDisplayName(job: HFJob) -> String {
         if let spaceId = job.spec.spaceId, !spaceId.isEmpty {
             return spaceId
@@ -431,7 +495,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func refreshJobs() {
         loadJobs()
     }
-    
+        
     func loadJobs() {
         // Clear and add loading indicator
         jobsSubmenu.removeAllItems()
@@ -442,45 +506,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             
             DispatchQueue.main.async {
-                // Clear the submenu
-                self.jobsSubmenu.removeAllItems()
-                
                 guard let jobs = jobs else {
+                    self.jobsSubmenu.removeAllItems()
                     self.jobsSubmenu.addItem(NSMenuItem(title: "Error fetching jobs", action: nil, keyEquivalent: ""))
                     return
                 }
                 
-                // Update cached jobs for status polling
+                // Update cached jobs
                 self.cachedJobs = jobs
                 
-                if jobs.isEmpty {
-                    self.jobsSubmenu.addItem(NSMenuItem(title: "No jobs found", action: nil, keyEquivalent: ""))
-                    return
-                }
-                
-                // Group jobs by state
-                let runningJobs = jobs.filter { $0.status.stage == "RUNNING" }
-                let completedJobs = jobs.filter { $0.status.stage == "COMPLETED" }
-                let errorJobs = jobs.filter { $0.status.stage == "ERROR" }
-                let otherJobs = jobs.filter { !["RUNNING", "COMPLETED", "ERROR"].contains($0.status.stage) }
-                
-                // Add sections for each state
-                self.addJobsSection(title: "Running Jobs", jobs: runningJobs, to: self.jobsSubmenu)
-                if !runningJobs.isEmpty && (!completedJobs.isEmpty || !errorJobs.isEmpty || !otherJobs.isEmpty) {
-                    self.jobsSubmenu.addItem(NSMenuItem.separator())
-                }
-                
-                self.addJobsSection(title: "Completed Jobs", jobs: completedJobs, to: self.jobsSubmenu)
-                if !completedJobs.isEmpty && (!errorJobs.isEmpty || !otherJobs.isEmpty) {
-                    self.jobsSubmenu.addItem(NSMenuItem.separator())
-                }
-                
-                self.addJobsSection(title: "Failed Jobs", jobs: errorJobs, to: self.jobsSubmenu)
-                if !errorJobs.isEmpty && !otherJobs.isEmpty {
-                    self.jobsSubmenu.addItem(NSMenuItem.separator())
-                }
-                
-                self.addJobsSection(title: "Other Jobs", jobs: otherJobs, to: self.jobsSubmenu)
+                // Update the UI
+                self.updateJobsUI(jobs: jobs)
             }
         }
     }
