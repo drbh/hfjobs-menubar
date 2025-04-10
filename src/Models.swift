@@ -1,5 +1,15 @@
 import Foundation
 
+// Helper struct to get app version information
+struct AppVersion {
+    static var current: String {
+        let dictionary = Bundle.main.infoDictionary!
+        let version = dictionary["CFBundleShortVersionString"] as? String ?? "Unknown"
+        let build = dictionary["CFBundleVersion"] as? String ?? "Unknown"
+        return "v\(version) (\(build))"
+    }
+}
+
 // Job data model
 struct HFJob: Codable, Equatable, Identifiable {
     struct Owner: Codable, Equatable {

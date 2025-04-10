@@ -168,6 +168,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         menu.addItem(notificationsMenuItem)
         
+        // Add version display (non-clickable)
+        menu.addItem(NSMenuItem.separator())
+        let versionItem = NSMenuItem(title: "Version: \(AppVersion.current)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+        
         // Add quit option
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
