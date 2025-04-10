@@ -2,57 +2,30 @@ import Cocoa
 import Foundation
 import UserNotifications
 
-// Job data model
-struct HFJob: Decodable, Equatable, Identifiable {
-    struct Owner: Decodable, Equatable {
-        let id: String
-        let name: String
-    }
-    
-    struct Metadata: Decodable, Equatable {
-        let jobId: String
-        let owner: Owner
-        let createdAt: String
-    }
-        
-    struct Spec: Decodable, Equatable {
-        let spaceId: String?     
-        let command: [String]
-        let flavor: String
-        let dockerImage: String?
-    }
-    
-    struct Status: Decodable, Equatable {
-        let stage: String
-        let message: String?
-    }
-    
-    let metadata: Metadata
-    let spec: Spec
-    let status: Status
-    
-    var id: String { metadata.jobId }
-}
-
+// Main application delegate
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var statusItem: NSStatusItem!
-    var jobsMenuItem: NSMenuItem!
-    var jobsSubmenu: NSMenu!
-    var timer: Timer?
-    var pollingTimer: Timer?
-    var isPollingSwitchedOn = false
-    var pollingMenuItem: NSMenuItem!
-    var cachedJobs: [HFJob] = []
+    // UI Components
+    private var statusItem: NSStatusItem!
+    private var jobsMenuItem: NSMenuItem!
+    private var jobsSubmenu: NSMenu!
+    private var pollingMenuItem: NSMenuItem!
     
-    let tokenKey = "HuggingFaceAPIToken"
-    let usernameKey = "HuggingFaceUsername"
-    let pollingEnabledKey = "PollingEnabled"
-    let pollingIntervalKey = "PollingInterval"
+    // Timers
+    private var timer: Timer?
+    private var pollingTimer: Timer?
     
+    // State
+    private var cachedJobs: [HFJob] = []
+    private var isPollingSwitchedOn = false
+    
+    // Initialize app
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Request notification permissions
-        requestNotificationPermissions()
-        
+        // Setup the app with token and username
+        setupApp()
+    }
+    
+    // Main app setup
+    private func setupApp() {
         // Check if token exists, if not prompt for it
         if !checkAndPromptForToken() {
             return // Don't proceed with app setup until token is provided
@@ -64,13 +37,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         // Create the status item in the menu bar
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        setupMenuBar()
         
-        if let button = statusItem.button {
-            button.title = "HF JOBS"
+        // Initial jobs loading
+        Task {
+            await loadJobs()
         }
         
-        // Create the menu
+        // Set up polling if enabled
+        isPollingSwitchedOn = AppSettings.shared.pollingEnabled
+        if isPollingSwitchedOn {
+            startPolling()
+        }
+        
+        // Set up a timer to refresh jobs periodically (every 60 seconds)
+        timer = Timer.scheduledTimer(timeInterval: 60, target: self, selector: #selector(refreshJobs), userInfo: nil, repeats: true)
+    }
+    
+    // Setup the menu bar
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let showTextInMenu = AppSettings.shared.showTextInMenu
+        if let button = statusItem.button {
+            if let iconImage = NSImage(named: "MenuBarIcon") {
+                iconImage.isTemplate = true
+                button.image = iconImage
+                button.image?.size = NSSize(width: 24, height: 24)
+                if showTextInMenu {
+                    button.title = "hfjobs"
+                }
+            }
+        }
+
+        createMenu()
+        updateMenuBarIcon()
+    }
+    
+    // Update the menu bar icon with running job count
+    private func updateMenuBarIcon() {
+        let runningJobs = cachedJobs.filter { $0.status.stage == "RUNNING" }
+        let runningCount = runningJobs.count
+        
+        if let button = statusItem.button {
+            if runningCount > 0 {
+                // Show the running job count
+                button.title = runningCount > 99 ? "99+" : "\(runningCount)"
+            } else {
+                // Show "hfjobs" or empty based on settings
+                button.title = AppSettings.shared.showTextInMenu ? "hfjobs" : ""
+            }
+        }
+    }
+    
+    // Create the main menu
+    private func createMenu() {
         let menu = NSMenu()
         
         // Jobs submenu
@@ -79,13 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         jobsMenuItem.submenu = jobsSubmenu
         menu.addItem(jobsMenuItem)
         
-        // Initial jobs loading
-        loadJobs()
-        
         menu.addItem(NSMenuItem.separator())
         
         // Polling toggle
-        isPollingSwitchedOn = UserDefaults.standard.bool(forKey: pollingEnabledKey)
+        isPollingSwitchedOn = AppSettings.shared.pollingEnabled
         pollingMenuItem = NSMenuItem(title: "Auto-Refresh: \(isPollingSwitchedOn ? "On" : "Off")", action: #selector(togglePolling), keyEquivalent: "p")
         menu.addItem(pollingMenuItem)
         
@@ -94,7 +111,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pollingIntervalSubmenu = NSMenu()
         
         let intervals = [5, 15, 30, 60, 120, 300]
-        let currentInterval = UserDefaults.standard.integer(forKey: pollingIntervalKey)
+        let currentInterval = AppSettings.shared.pollingInterval
         
         for interval in intervals {
             let item = NSMenuItem(title: "\(interval) seconds", action: #selector(setPollingInterval(_:)), keyEquivalent: "")
@@ -106,6 +123,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pollingIntervalMenuItem.submenu = pollingIntervalSubmenu
         menu.addItem(pollingIntervalMenuItem)
         
+        // Jobs view submenu
+        let jobViewMenuItem = NSMenuItem(title: "View Jobs", action: nil, keyEquivalent: "")
+        let jobViewSubmenu = NSMenu()
+        
+        let viewOptions = ["All", "In Last 5 Minutes", "In Last Day", "Running", "Completed", "Failed"]
+        
+        for option in viewOptions {
+            let item = NSMenuItem(title: option, action: #selector(switchJobView(_:)), keyEquivalent: "")
+            item.state = option == "All" ? .on : .off
+            jobViewSubmenu.addItem(item)
+        }
+        
+        jobViewMenuItem.submenu = jobViewSubmenu
+        menu.addItem(jobViewMenuItem)
+        
         // Web links
         menu.addItem(NSMenuItem.separator())
         addMenuItem(to: menu, title: "Hugging Face", link: "https://huggingface.co/")
@@ -115,11 +147,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Refresh Jobs", action: #selector(refreshJobs), keyEquivalent: "r"))
         
-        // Add update token option
+        // Settings
         menu.addItem(NSMenuItem(title: "Update Token", action: #selector(promptForToken), keyEquivalent: "t"))
-        
-        // Add update username option
         menu.addItem(NSMenuItem(title: "Update Username", action: #selector(promptForUsername), keyEquivalent: "u"))
+        menu.addItem(NSMenuItem(title: "Clear Job History", action: #selector(clearJobHistory), keyEquivalent: ""))
+        
+        // Show/Hide Text in Menu Bar
+        let showTextMenuItem = NSMenuItem(
+            title: "Show Text in Menu Bar: \(AppSettings.shared.showTextInMenu ? "On" : "Off")", 
+            action: #selector(toggleShowTextInMenu), 
+            keyEquivalent: "m"
+        )
+        menu.addItem(showTextMenuItem)
+        
+        // Notifications toggle
+        let notificationsMenuItem = NSMenuItem(
+            title: "Notifications: \(AppSettings.shared.notificationsEnabled ? "On" : "Off")", 
+            action: #selector(toggleNotifications), 
+            keyEquivalent: "n"
+        )
+        menu.addItem(notificationsMenuItem)
         
         // Add quit option
         menu.addItem(NSMenuItem.separator())
@@ -127,107 +174,223 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Set the menu
         statusItem.menu = menu
-        
-        // Set up polling if enabled
-        if isPollingSwitchedOn {
-            startPolling()
-        }
-        
-        // Set up a timer to refresh jobs periodically (every 60 seconds)
-        timer = Timer.scheduledTimer(timeInterval: 60, target: self, selector: #selector(refreshJobs), userInfo: nil, repeats: true)
     }
     
-    func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if granted {
-                print("Notification permissions granted")
-            } else if let error = error {
-                print("Error requesting notification permissions: \(error)")
+    // MARK: - Job Loading and Polling
+    
+    // Load jobs using async/await
+    @MainActor
+    private func loadJobs() async {
+        // Clear and add loading indicator
+        jobsSubmenu.removeAllItems()
+        jobsSubmenu.addItem(NSMenuItem(title: "Loading jobs...", action: nil, keyEquivalent: ""))
+        
+        do {
+            let jobs = try await JobService.shared.fetchJobs()
+            
+            // Update cached jobs
+            cachedJobs = jobs
+            
+            // Update the UI
+            updateJobsUI(jobs: jobs)
+        } catch {
+            jobsSubmenu.removeAllItems()
+            jobsSubmenu.addItem(NSMenuItem(title: "Error: \(JobService.shared.errorMessage(for: error))", action: nil, keyEquivalent: ""))
+            
+            // If unauthorized, prompt for a new token
+            if case JobServiceError.httpError(401) = error {
+                let alert = NSAlert()
+                alert.messageText = "Authentication Error"
+                alert.informativeText = "Your Hugging Face API token is invalid or expired. Please update it."
+                alert.alertStyle = .critical
+                alert.runModal()
+                promptForToken()
             }
         }
     }
     
-    @objc func togglePolling() {
-        isPollingSwitchedOn.toggle()
-        UserDefaults.standard.set(isPollingSwitchedOn, forKey: pollingEnabledKey)
-        pollingMenuItem.title = "Auto-Refresh: \(isPollingSwitchedOn ? "On" : "Off")"
+    // Poll job status with async/await
+    @objc private func pollJobStatus() {
+        print("Polling for job status changes...")
         
-        if isPollingSwitchedOn {
-            startPolling()
-            showNotification(title: "HF Jobs Polling", body: "Real-time status monitoring is now active")
-        } else {
-            stopPolling()
-            showNotification(title: "HF Jobs Polling", body: "Real-time status monitoring is now disabled")
+        Task {
+            do {
+                let jobs = try await JobService.shared.fetchJobs()
+                
+                await MainActor.run {
+                    // Get the current view filter
+                    let currentFilter = getCurrentFilter()
+                    
+                    // Detect status changes for notifications
+                    detectStatusChanges(oldJobs: cachedJobs, newJobs: jobs)
+                    
+                    // Update the cached jobs after checking for changes
+                    cachedJobs = jobs
+                    
+                    // Apply the current filter to the updated jobs
+                    applyJobFilter(filter: currentFilter)
+                }
+            } catch {
+                print("Error during polling: \(error.localizedDescription)")
+            }
         }
     }
     
-    @objc func setPollingInterval(_ sender: NSMenuItem) {
-        let interval = sender.tag
-        UserDefaults.standard.set(interval, forKey: pollingIntervalKey)
+    // Get the currently selected filter
+    private func getCurrentFilter() -> String {
+        if let jobViewMenuItem = statusItem.menu?.items.first(where: { $0.title == "View Jobs" }),
+           let submenu = jobViewMenuItem.submenu {
+            for item in submenu.items {
+                if item.state == .on {
+                    return item.title
+                }
+            }
+        }
+        return "All" // Default to "All" if no filter is selected
+    }
+    
+    // Apply the current job filter
+    private func applyJobFilter(filter: String) {
+        if filter == "All" {
+            updateJobsUI(jobs: cachedJobs)
+            return
+        }
         
+        var filteredJobs: [HFJob] = []
+        let currentDate = Date()
+        
+        // Time-based filters
+        if filter == "In Last 5 Minutes" {
+            filteredJobs = cachedJobs.filter { job in
+                guard let date = job.creationDate else {
+                    return false
+                }
+                return currentDate.timeIntervalSince(date) <= 300 // 5 minutes = 300 seconds
+            }
+        } else if filter == "In Last Day" {
+            filteredJobs = cachedJobs.filter { job in
+                guard let date = job.creationDate else {
+                    return false
+                }
+                return currentDate.timeIntervalSince(date) <= 86400 // 1 day = 86400 seconds
+            }
+        } 
+        // Status-based filters
+        else {
+            let statusMap = [
+                "Running": "RUNNING",
+                "Completed": "COMPLETED",
+                "Failed": "ERROR"
+            ]
+            
+            guard let status = statusMap[filter] else {
+                return
+            }
+            
+            filteredJobs = cachedJobs.filter { $0.status.stage == status }
+        }
+        
+        updateJobsUI(jobs: filteredJobs, showFilterMessage: true, filterStatus: filter)
+    }
+    
+    @objc func refreshJobs() {
+        Task {
+            await loadJobs()
+            
+            // Also apply any active filter after refreshing
+            DispatchQueue.main.async {
+                let currentFilter = self.getCurrentFilter()
+                if currentFilter != "All" {
+                    self.applyJobFilter(filter: currentFilter)
+                }
+            }
+        }
+    }
+    
+    // MARK: - UI Updates
+    
+    // Store active job detail windows
+    private var activeJobWindows: [String: JobDetailWindowController] = [:]
+    
+    // Switch job view based on selection
+    @objc func switchJobView(_ sender: NSMenuItem) {
         // Update menu item states
         if let submenu = sender.menu {
             for item in submenu.items {
-                item.state = item.tag == interval ? .on : .off
+                item.state = (item == sender) ? .on : .off
             }
         }
         
-        // Restart polling if it's enabled
-        if isPollingSwitchedOn {
-            stopPolling()
-            startPolling()
-        }
-    }
-    
-    func startPolling() {
-        stopPolling() // Ensure we don't have multiple timers running
+        // Apply filter based on the selected view option
+        let viewOption = sender.title
         
-        let interval = UserDefaults.standard.integer(forKey: pollingIntervalKey)
-        let pollingInterval = TimeInterval(interval > 0 ? interval : 60) // Default to 60 seconds
+        // // Keep the menu open by preventing the default menu closure behavior
+        // NSApp.mainMenu?.cancelTracking()
+        // statusItem.button?.performClick(nil)
         
-        pollingTimer = Timer.scheduledTimer(timeInterval: pollingInterval, target: self, selector: #selector(pollJobStatus), userInfo: nil, repeats: true)
-        
-        // Initial poll
-        pollJobStatus()
-    }
-    
-    func stopPolling() {
-        pollingTimer?.invalidate()
-        pollingTimer = nil
-    }
-    
-    @objc func pollJobStatus() {
-        print("Polling for job status changes...")
-        
-        fetchJobs { [weak self] jobs in
-            guard let self = self else { return }
-            
-            DispatchQueue.main.async {
-                guard let jobs = jobs else {
-                    print("Failed to fetch jobs during polling")
+        Task {
+            await MainActor.run {
+                // Default case - show all jobs
+                if viewOption == "All" {
+                    updateJobsUI(jobs: cachedJobs)
                     return
                 }
                 
-                // Always update the UI when new jobs are fetched
-                // This ensures the UI stays in sync with the actual data
-                self.updateJobsUI(jobs: jobs)
+                var filteredJobs: [HFJob] = []
+                let currentDate = Date()
                 
-                // Detect status changes for notifications
-                self.detectStatusChanges(oldJobs: self.cachedJobs, newJobs: jobs)
+                // Time-based filters
+                if viewOption == "In Last 5 Minutes" {
+                    filteredJobs = cachedJobs.filter { job in
+                        guard let date = job.creationDate else {
+                            return false
+                        }
+                        return currentDate.timeIntervalSince(date) <= 300 // 5 minutes = 300 seconds
+                    }
+                } else if viewOption == "In Last Day" {
+                    filteredJobs = cachedJobs.filter { job in
+                        guard let date = job.creationDate else {
+                            return false
+                        }
+                        return currentDate.timeIntervalSince(date) <= 86400 // 1 day = 86400 seconds
+                    }
+                } 
+                // Status-based filters
+                else {
+                    let statusMap = [
+                        "Running": "RUNNING",
+                        "Completed": "COMPLETED",
+                        "Failed": "ERROR"
+                    ]
+                    
+                    guard let status = statusMap[viewOption] else {
+                        return
+                    }
+                    
+                    filteredJobs = cachedJobs.filter { $0.status.stage == status }
+                }
                 
-                // Update the cached jobs after checking for changes
-                self.cachedJobs = jobs
+                updateJobsUI(jobs: filteredJobs, showFilterMessage: true, filterStatus: viewOption)
             }
         }
     }
-
-
-    func updateJobsUI(jobs: [HFJob]) {
+    
+    // Update the jobs UI with the current list of jobs
+    private func updateJobsUI(jobs: [HFJob], showFilterMessage: Bool = false, filterStatus: String = "All") {
         // Clear the submenu
         jobsSubmenu.removeAllItems()
         
+        // Show filter message if needed
+        if showFilterMessage && filterStatus != "All" {
+            let filterItem = NSMenuItem(title: "Showing \(filterStatus) Jobs", action: nil, keyEquivalent: "")
+            filterItem.isEnabled = false
+            jobsSubmenu.addItem(filterItem)
+            jobsSubmenu.addItem(NSMenuItem.separator())
+        }
+        
         if jobs.isEmpty {
             jobsSubmenu.addItem(NSMenuItem(title: "No jobs found", action: nil, keyEquivalent: ""))
+            updateMenuBarIcon() // Update menu bar even if no jobs
             return
         }
         
@@ -254,10 +417,148 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         addJobsSection(title: "Other Jobs", jobs: otherJobs, to: jobsSubmenu)
-    }
-
         
-    func detectStatusChanges(oldJobs: [HFJob], newJobs: [HFJob]) {
+        // Update any open job detail windows with fresh data
+        for job in jobs {
+            if let windowController = activeJobWindows[job.id] {
+                windowController.updateJob(job)
+            }
+        }
+        
+        // Update menu bar icon with running job count
+        updateMenuBarIcon()
+    }
+    
+    // Add a section of jobs to the menu
+    private func addJobsSection(title: String, jobs: [HFJob], to menu: NSMenu) {
+        if jobs.isEmpty {
+            return
+        }
+        
+        // Add section header
+        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        
+        // Add jobs
+        for job in jobs {
+            addJobMenuItem(job, to: menu)
+        }
+    }
+    
+    // Add a job item to the menu
+    private func addJobMenuItem(_ job: HFJob, to menu: NSMenu) {
+        // Get a truncated version of the display name
+        let shortNameDisplay = job.displayName.count > 20 ? "\(job.displayName.prefix(20))..." : job.displayName
+        
+        // Create the main menu item with the job name and status
+        let itemTitle = "\(job.statusEmoji) [\(shortNameDisplay)] `\(job.formattedCommand)` (\(job.formattedCreationDate))"
+        let item = NSMenuItem(title: itemTitle, action: #selector(openJobDetails(_:)), keyEquivalent: "")
+        item.representedObject = job
+        
+        // Create submenu for job details and actions
+        let jobSubmenu = NSMenu()
+        
+        // Add "Open Details" as the first item in the submenu
+        let openDetailsItem = NSMenuItem(title: "Open Detailed View", action: #selector(openJobDetails(_:)), keyEquivalent: "o")
+        openDetailsItem.representedObject = job
+        jobSubmenu.addItem(openDetailsItem)
+        
+        jobSubmenu.addItem(NSMenuItem.separator())
+        
+        // Add detailed info items
+        jobSubmenu.addItem(makeInfoMenuItem("Job ID: \(job.metadata.jobId)"))
+        if let spaceId = job.spec.spaceId {
+            jobSubmenu.addItem(makeInfoMenuItem("Space: \(spaceId)"))
+        } else {
+            jobSubmenu.addItem(makeInfoMenuItem("Space: N/A"))
+        }
+        jobSubmenu.addItem(makeInfoMenuItem("Docker Image: \(job.spec.dockerImage ?? "N/A")"))
+        jobSubmenu.addItem(makeInfoMenuItem("Status: \(job.status.stage)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Created: \(job.metadata.createdAt)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Owner: \(job.metadata.owner.name)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Flavor: \(job.spec.flavor)"))
+        
+        if let message = job.status.message, !message.isEmpty {
+            jobSubmenu.addItem(makeInfoMenuItem("Message: \(message)"))
+        }
+        
+        // Add command with full details
+        jobSubmenu.addItem(NSMenuItem.separator())
+        jobSubmenu.addItem(makeInfoMenuItem("Command:"))
+        let commandString = job.spec.command.joined(separator: " ")
+        jobSubmenu.addItem(makeInfoMenuItem("  \(commandString)"))
+        
+        // Add actions
+        jobSubmenu.addItem(NSMenuItem.separator())
+        
+        // Copy Job ID action
+        let copyJobIdItem = NSMenuItem(title: "Copy Job ID", action: #selector(copyText(_:)), keyEquivalent: "")
+        copyJobIdItem.representedObject = job.metadata.jobId
+        jobSubmenu.addItem(copyJobIdItem)
+        
+        // TODO: revisit when cancel job action is available
+        // // Cancel job action (only for running jobs)
+        // if job.status.stage == "RUNNING" {
+        //     let cancelJobItem = NSMenuItem(title: "Cancel Job", action: #selector(cancelJob(_:)), keyEquivalent: "")
+        //     cancelJobItem.representedObject = job.metadata.jobId
+        //     jobSubmenu.addItem(cancelJobItem)
+        // }
+        
+        // Open in browser action (if spaceId is available)
+        if let spaceId = job.spec.spaceId {
+            let spaceUrl = "https://huggingface.co/spaces/\(spaceId)"
+            let openInBrowserItem = NSMenuItem(title: "Open Space in Browser", action: #selector(openLink(_:)), keyEquivalent: "")
+            openInBrowserItem.representedObject = spaceUrl
+            jobSubmenu.addItem(openInBrowserItem)
+        }
+        
+        item.submenu = jobSubmenu
+        menu.addItem(item)
+    }
+    
+    // Open job details window
+    @objc func openJobDetails(_ sender: NSMenuItem) {
+        guard let job = sender.representedObject as? HFJob else { return }
+        
+        // Check if window is already open
+        if let existingWindow = activeJobWindows[job.id] {
+            existingWindow.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        
+        // Create a new window controller for the job
+        let windowController = JobDetailWindowController(job: job) { [weak self] in
+            // Remove window from active windows when closed
+            self?.activeJobWindows.removeValue(forKey: job.id)
+        }
+        
+        // Store the window controller
+        activeJobWindows[job.id] = windowController
+        
+        // Show the window
+        windowController.showWindow(nil)
+        windowController.window?.makeKeyAndOrderFront(nil)
+    }
+    
+    // Helper to create an info menu item
+    private func makeInfoMenuItem(_ text: String) -> NSMenuItem {
+        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+    
+    // Helper to add a menu item that opens a link
+    private func addMenuItem(to menu: NSMenu, title: String, link: String) {
+        let item = NSMenuItem(title: title, action: #selector(openLink(_:)), keyEquivalent: "")
+        item.representedObject = link
+        menu.addItem(item)
+    }
+    
+    // MARK: - Status Change Detection
+    
+    // Detect changes in job status and show notifications
+    private func detectStatusChanges(oldJobs: [HFJob], newJobs: [HFJob]) {
         print("Checking for status changes between \(oldJobs.count) old jobs and \(newJobs.count) new jobs")
         
         // Create dictionaries for quick lookup
@@ -269,49 +570,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let newJob = newJobsDict[jobId] {
                 // Job still exists - check if status changed
                 if oldJob.status.stage != newJob.status.stage {
-                    let jobName = getJobDisplayName(job: newJob)
                     print("Status change detected: \(jobId) changed from \(oldJob.status.stage) to \(newJob.status.stage)")
+                    NotificationService.shared.notifyJobStatusChange(oldJob: oldJob, newJob: newJob)
                     
-                    showNotification(
-                        title: "Job Status Changed",
-                        body: "Job '\(jobName)' changed from \(oldJob.status.stage) to \(newJob.status.stage)"
-                    )
-                    
-                    // Special notification for completion
+                    // For completed jobs, add to history
                     if newJob.status.stage == "COMPLETED" {
-                        print("Job completed: \(jobId)")
-                        showNotification(
-                            title: "✅ Job Completed",
-                            body: "Job '\(jobName)' has completed successfully"
-                        )
-                    }
-                    
-                    // Special notification for errors
-                    if newJob.status.stage == "ERROR" {
-                        print("Job failed: \(jobId)")
-                        let errorMessage = newJob.status.message ?? "Unknown error"
-                        showNotification(
-                            title: "❌ Job Failed",
-                            body: "Job '\(jobName)' failed: \(errorMessage)"
-                        )
+                        var settings = AppSettings.shared
+                        settings.addJobToHistory(newJob)
                     }
                 }
             } else {
                 // Job disappeared from the list
-                let jobName = getJobDisplayName(job: oldJob)
                 print("Job disappeared: \(jobId) (previous status: \(oldJob.status.stage))")
+                NotificationService.shared.notifyJobRemoved(oldJob)
                 
-                // If the job was running and disappeared, it likely completed
+                // If job was running, mark it as completed in history
                 if oldJob.status.stage == "RUNNING" {
-                    showNotification(
-                        title: "✅ Job Likely Completed",
-                        body: "Running job '\(jobName)' is no longer in the list (likely completed)"
-                    )
-                } else {
-                    showNotification(
-                        title: "Job Removed",
-                        body: "Job '\(jobName)' is no longer in the job list"
-                    )
+                    // Create a "completed" version of the job
+                    var updatedJob = oldJob
+                    var updatedStatus = oldJob.status
+                    updatedStatus.stage = "COMPLETED"
+                    updatedJob.status = updatedStatus
+                    
+                    var settings = AppSettings.shared
+                    settings.addJobToHistory(updatedJob)
                 }
             }
         }
@@ -319,75 +601,208 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check for new jobs
         for (jobId, newJob) in newJobsDict {
             if oldJobsDict[jobId] == nil {
-                let jobName = getJobDisplayName(job: newJob)
                 print("New job detected: \(jobId) with status \(newJob.status.stage)")
-                
-                if newJob.status.stage == "RUNNING" {
-                    showNotification(
-                        title: "🟢 New Job Started",
-                        body: "Job '\(jobName)' has started running"
+                NotificationService.shared.notifyNewJob(newJob)
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    
+    // Copy text to clipboard
+    @objc func copyText(_ sender: NSMenuItem) {
+        if let text = sender.representedObject as? String {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+    }
+    
+    // Cancel a running job
+    @objc func cancelJob(_ sender: NSMenuItem) {
+        guard let jobId = sender.representedObject as? String else { return }
+        
+        // Confirm before canceling
+        let alert = NSAlert()
+        alert.messageText = "Cancel Job"
+        alert.informativeText = "Are you sure you want to cancel this job? This action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Cancel Job")
+        alert.addButton(withTitle: "Keep Running")
+        
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            // User confirmed, cancel the job
+            Task {
+                do {
+                    try await JobService.shared.cancelJob(jobId: jobId)
+                    
+                    // Show notification
+                    NotificationService.shared.showNotification(
+                        title: "Job Cancellation Requested",
+                        body: "Job \(jobId) has been requested to cancel. It may take a moment to take effect."
                     )
-                } else {
-                    showNotification(
-                        title: "New Job Added",
-                        body: "Job '\(jobName)' added with status: \(newJob.status.stage)"
+                    
+                    // Refresh jobs after a short delay to see updated status
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        self.refreshJobs()
+                    }
+                } catch {
+                    // Show error
+                    NotificationService.shared.showNotification(
+                        title: "Job Cancellation Failed",
+                        body: "Could not cancel job: \(JobService.shared.errorMessage(for: error))"
                     )
                 }
             }
         }
     }
-
-    func getJobDisplayName(job: HFJob) -> String {
-        if let spaceId = job.spec.spaceId, !spaceId.isEmpty {
-            return spaceId
-        } else if let dockerImage = job.spec.dockerImage, !dockerImage.isEmpty {
-            // Extract meaningful part from docker image name if possible
-            let components = dockerImage.split(separator: "/")
-            if let lastComponent = components.last {
-                return String(lastComponent)
-            }
-            return dockerImage
-        } else {
-            // Use the first part of the command as an identifier
-            let command = job.spec.command.first ?? ""
-            if !command.isEmpty {
-                return "Command: \(command)"
-            }
-            // Fallback to job ID if nothing else is available
-            return "Job \(job.id.prefix(8))"
+    
+    // Open a link in the browser
+    @objc func openLink(_ sender: NSMenuItem) {
+        if let link = sender.representedObject as? String, let url = URL(string: link) {
+            NSWorkspace.shared.open(url)
         }
     }
     
-    func showNotification(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = UNNotificationSound.default
+    // Clear job history
+    @objc func clearJobHistory() {
+        let alert = NSAlert()
+        alert.messageText = "Clear Job History"
+        alert.informativeText = "Are you sure you want to clear your job history? This action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear History")
+        alert.addButton(withTitle: "Cancel")
         
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Error showing notification: \(error)")
-            }
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            var settings = AppSettings.shared
+            settings.clearJobHistory()
+            
+            NotificationService.shared.showNotification(
+                title: "Job History Cleared",
+                body: "Your job history has been cleared."
+            )
         }
     }
     
+    // MARK: - Polling Controls
+    
+    // Toggle real-time job polling
+    @objc func togglePolling() {
+        isPollingSwitchedOn.toggle()
+        AppSettings.shared.pollingEnabled = isPollingSwitchedOn
+        pollingMenuItem.title = "Auto-Refresh: \(isPollingSwitchedOn ? "On" : "Off")"
+        
+        if isPollingSwitchedOn {
+            startPolling()
+            NotificationService.shared.showNotification(
+                title: "HF Jobs Polling",
+                body: "Real-time status monitoring is now active"
+            )
+        } else {
+            stopPolling()
+            NotificationService.shared.showNotification(
+                title: "HF Jobs Polling",
+                body: "Real-time status monitoring is now disabled"
+            )
+        }
+    }
+    
+    // Set the polling interval
+    @objc func setPollingInterval(_ sender: NSMenuItem) {
+        let interval = sender.tag
+        AppSettings.shared.pollingInterval = interval
+        
+        // Update menu item states
+        if let submenu = sender.menu {
+            for item in submenu.items {
+                item.state = item.tag == interval ? .on : .off
+            }
+        }
+        
+        // Restart polling if it's enabled
+        if isPollingSwitchedOn {
+            stopPolling()
+            startPolling()
+        }
+    }
+    
+    // Start the polling timer
+    func startPolling() {
+        stopPolling() // Ensure we don't have multiple timers running
+        
+        let interval = TimeInterval(AppSettings.shared.pollingInterval)
+        
+        pollingTimer = Timer.scheduledTimer(timeInterval: interval, target: self, selector: #selector(pollJobStatus), userInfo: nil, repeats: true)
+        
+        // Initial poll
+        pollJobStatus()
+    }
+    
+    // Stop the polling timer
+    func stopPolling() {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+    }
+    
+    // MARK: - Menu Settings
+    
+    // Toggle showing text in menu bar
+    @objc func toggleShowTextInMenu() {
+        // Toggle the setting
+        AppSettings.shared.showTextInMenu = !AppSettings.shared.showTextInMenu
+        
+        // Update the menu bar with running job count
+        updateMenuBarIcon()
+        
+        // Rebuild the menu to update the menu item text
+        // createMenu()
+        setupApp()
+    }
+    
+    // Toggle notifications
+    @objc func toggleNotifications() {
+        // Toggle the setting
+        AppSettings.shared.notificationsEnabled = !AppSettings.shared.notificationsEnabled
+        
+        // Rebuild the menu to update the menu item text
+        createMenu()
+        
+        // Show feedback about the change
+        if AppSettings.shared.notificationsEnabled {
+            NotificationService.shared.showNotification(
+                title: "Notifications Enabled",
+                body: "You will now receive notifications for job status changes"
+            )
+        } else {
+            print("Notifications disabled by user")
+        }
+    }
+    
+    // MARK: - Token and Username Management
+    
+    // Check if token exists, if not prompt for it
     func checkAndPromptForToken() -> Bool {
-        if UserDefaults.standard.string(forKey: tokenKey) == nil {
+        if AppSettings.shared.token == nil {
             promptForToken()
             return false
         }
         return true
     }
     
+    // Check if username exists, if not prompt for it
     func checkAndPromptForUsername() -> Bool {
-        if UserDefaults.standard.string(forKey: usernameKey) == nil {
+        if AppSettings.shared.username == nil {
             promptForUsername()
             return false
         }
         return true
     }
     
+    // Prompt for HF token
     @objc func promptForToken() {
         let alert = NSAlert()
         alert.messageText = "Hugging Face API Token"
@@ -398,7 +813,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         textField.placeholderString = "hf_..."
         
         // Pre-fill with existing token if available
-        if let existingToken = UserDefaults.standard.string(forKey: tokenKey) {
+        if let existingToken = AppSettings.shared.token {
             textField.stringValue = existingToken
         }
         
@@ -411,7 +826,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if response == .alertFirstButtonReturn {
             let token = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !token.isEmpty {
-                UserDefaults.standard.set(token, forKey: tokenKey)
+                AppSettings.shared.token = token
                 
                 // If this is an update (app is already running), refresh jobs
                 if statusItem != nil {
@@ -434,6 +849,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    // Prompt for HF username
     @objc func promptForUsername() {
         let alert = NSAlert()
         alert.messageText = "Hugging Face Username"
@@ -444,7 +860,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         textField.placeholderString = "username"
         
         // Pre-fill with existing username if available
-        if let existingUsername = UserDefaults.standard.string(forKey: usernameKey) {
+        if let existingUsername = AppSettings.shared.username {
             textField.stringValue = existingUsername
         }
         
@@ -457,7 +873,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if response == .alertFirstButtonReturn {
             let username = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !username.isEmpty {
-                UserDefaults.standard.set(username, forKey: usernameKey)
+                AppSettings.shared.username = username
                 
                 // If this is an update (app is already running), refresh jobs
                 if statusItem != nil {
@@ -480,238 +896,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    func addMenuItem(to menu: NSMenu, title: String, link: String) {
-        let menuItem = NSMenuItem(title: title, action: #selector(openLink(_:)), keyEquivalent: "")
-        menuItem.representedObject = link
-        menu.addItem(menuItem)
-    }
-    
-    @objc func openLink(_ sender: NSMenuItem) {
-        if let link = sender.representedObject as? String, let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-    
-    @objc func refreshJobs() {
-        loadJobs()
-    }
-        
-    func loadJobs() {
-        // Clear and add loading indicator
-        jobsSubmenu.removeAllItems()
-        jobsSubmenu.addItem(NSMenuItem(title: "Loading jobs...", action: nil, keyEquivalent: ""))
-        
-        // Fetch jobs
-        fetchJobs { [weak self] jobs in
-            guard let self = self else { return }
-            
-            DispatchQueue.main.async {
-                guard let jobs = jobs else {
-                    self.jobsSubmenu.removeAllItems()
-                    self.jobsSubmenu.addItem(NSMenuItem(title: "Error fetching jobs", action: nil, keyEquivalent: ""))
-                    return
-                }
-                
-                // Update cached jobs
-                self.cachedJobs = jobs
-                
-                // Update the UI
-                self.updateJobsUI(jobs: jobs)
-            }
-        }
-    }
-    
-    func addJobsSection(title: String, jobs: [HFJob], to menu: NSMenu) {
-        if jobs.isEmpty {
-            return
-        }
-        
-        // Add section header
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        
-        // Add jobs
-        for job in jobs {
-            addJobMenuItem(job, to: menu)
-        }
-    }
-    
-    func addJobMenuItem(_ job: HFJob, to menu: NSMenu) {
-        // Get emoji for job status
-        let statusEmoji: String
-        switch job.status.stage {
-        case "RUNNING":
-            statusEmoji = "🟢"
-        case "COMPLETED":
-            statusEmoji = "✅"
-        case "ERROR":
-            statusEmoji = "❌"
-        case "PENDING":
-            statusEmoji = "⏳"
-        case "QUEUED":
-            statusEmoji = "🟡"
-        default:
-            statusEmoji = "❓"
-        }
-        // Format creation date (2025-04-01T15:03:30.589Z)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        let displayDate: String
-        if let date = dateFormatter.date(from: job.metadata.createdAt) {
-            let relativeFormatter = RelativeDateTimeFormatter()
-            relativeFormatter.unitsStyle = .abbreviated
-            displayDate = relativeFormatter.localizedString(for: date, relativeTo: Date())
-        } else {
-            displayDate = "Unknown time"
-        }
-        // Get a meaningful job name using our helper function
-        let shortName = getJobDisplayName(job: job)
-        // ensure its only 20 characters max
-        let shortNameDisplay = shortName.count > 20 ? "\(shortName.prefix(20))..." : shortName
-        // Create command string for display
-        let commandDisplay = job.spec.command.joined(separator: " ")
-        let shortCommand = commandDisplay.count > 30 ? "\(commandDisplay.prefix(30))..." : commandDisplay
-        
-        // Create submenu for job details and actions
-        let jobSubmenu = NSMenu()
-        
-        // Add detailed info items
-        jobSubmenu.addItem(makeInfoMenuItem("Job ID: \(job.metadata.jobId)"))
-        // jobSubmenu.addItem(makeInfoMenuItem("Space: \(job.spec.spaceId)"))
-        if let spaceId = job.spec.spaceId {
-            jobSubmenu.addItem(makeInfoMenuItem("Space: \(spaceId)"))
-        } else {
-            jobSubmenu.addItem(makeInfoMenuItem("Space: N/A"))
-        }
-        jobSubmenu.addItem(makeInfoMenuItem("Docker Image: \(job.spec.dockerImage ?? "N/A")"))
-        jobSubmenu.addItem(makeInfoMenuItem("Status: \(job.status.stage)"))
-        jobSubmenu.addItem(makeInfoMenuItem("Created: \(dateFormatter.string(from: dateFormatter.date(from: job.metadata.createdAt) ?? Date()))"))
-        jobSubmenu.addItem(makeInfoMenuItem("Owner: \(job.metadata.owner.name)"))
-        jobSubmenu.addItem(makeInfoMenuItem("Flavor: \(job.spec.flavor)"))
-        
-        if let message = job.status.message, !message.isEmpty {
-            jobSubmenu.addItem(makeInfoMenuItem("Message: \(message)"))
-        }
-        
-        // Add command with full details
-        jobSubmenu.addItem(NSMenuItem.separator())
-        jobSubmenu.addItem(makeInfoMenuItem("Command:"))
-        let commandString = job.spec.command.joined(separator: " ")
-        jobSubmenu.addItem(makeInfoMenuItem("  \(commandString)"))
-        
-        // Add actions
-        jobSubmenu.addItem(NSMenuItem.separator())
-        
-        // Copy Job ID action
-        let copyJobIdItem = NSMenuItem(title: "Copy Job ID", action: #selector(copyText(_:)), keyEquivalent: "")
-        copyJobIdItem.representedObject = job.metadata.jobId
-        jobSubmenu.addItem(copyJobIdItem)
-        
-        // Open in browser action (if spaceId is available)
-        if let spaceId = job.spec.spaceId {
-            let spaceUrl = "https://huggingface.co/spaces/\(spaceId)"
-            let openInBrowserItem = NSMenuItem(title: "Open Space in Browser", action: #selector(openLink(_:)), keyEquivalent: "")
-            openInBrowserItem.representedObject = spaceUrl
-            jobSubmenu.addItem(openInBrowserItem)
-        }
-        
-        // Create the main menu item with the job name and status
-        let itemTitle = "\(statusEmoji) [\(shortNameDisplay)] `\(shortCommand)` (\(displayDate))"
-        let item = NSMenuItem(title: itemTitle, action: nil, keyEquivalent: "")
-        item.submenu = jobSubmenu
-        menu.addItem(item)
-    }
-    
-    func makeInfoMenuItem(_ text: String) -> NSMenuItem {
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
-    }
-    
-    @objc func copyText(_ sender: NSMenuItem) {
-        if let text = sender.representedObject as? String {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        }
-    }
-    
-    func fetchJobs(completion: @escaping ([HFJob]?) -> Void) {
-        guard let token = UserDefaults.standard.string(forKey: tokenKey), !token.isEmpty else {
-            print("No API token found")
-            // Prompt for token if not available
-            DispatchQueue.main.async {
-                self.promptForToken()
-            }
-            completion(nil)
-            return
-        }
-        
-        guard let username = UserDefaults.standard.string(forKey: usernameKey), !username.isEmpty else {
-            print("No username found")
-            // Prompt for username if not available
-            DispatchQueue.main.async {
-                self.promptForUsername()
-            }
-            completion(nil)
-            return
-        }
-        
-        guard let url = URL(string: "https://huggingface.co/api/jobs/\(username)") else {
-            completion(nil)
-            return
-        }
-        
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                print("Error fetching jobs: \(error)")
-                completion(nil)
-                return
-            }
-            
-            // Check for HTTP status code
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                print("HTTP Error: \(httpResponse.statusCode)")
-                
-                // If unauthorized (401), prompt for a new token
-                if httpResponse.statusCode == 401 {
-                    DispatchQueue.main.async {
-                        let alert = NSAlert()
-                        alert.messageText = "Authentication Error"
-                        alert.informativeText = "Your Hugging Face API token is invalid or expired. Please update it."
-                        alert.alertStyle = .critical
-                        alert.runModal()
-                        self.promptForToken()
-                    }
-                }
-                
-                completion(nil)
-                return
-            }
-            
-            guard let data = data else {
-                print("No data received")
-                completion(nil)
-                return
-            }
-            do {
-                let jobs = try JSONDecoder().decode([HFJob].self, from: data)
-                completion(jobs)
-            } catch {
-                print("Error decoding jobs: \(error)")
-                completion(nil)
-            }
-        }
-        
-        task.resume()
-    }
-    
+    // Clean up on app termination
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
         pollingTimer?.invalidate()
