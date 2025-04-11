@@ -19,5 +19,9 @@
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>com.hfjobs.menubar</string>
+    </array>
 </dict>
 </plist>

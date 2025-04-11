@@ -3,7 +3,7 @@ import Foundation
 import UserNotifications
 
 // Main application delegate
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     // UI Components
     private var statusItem: NSStatusItem!
     private var jobsMenuItem: NSMenuItem!
@@ -20,8 +20,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Initialize app
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set up notification center delegate
+        UNUserNotificationCenter.current().delegate = self
+        
         // Setup the app with token and username
         setupApp()
+    }
+    
+    // MARK: - UNUserNotificationCenterDelegate
+    
+    // Handle notifications when app is in foreground
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Always show notifications, even when the app is in foreground
+        completionHandler([.banner, .sound, .badge])
+    }
+    
+    // Handle notification responses
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        // You could add logic here to handle when a user clicks on a notification
+        completionHandler()
     }
     
     // Main app setup

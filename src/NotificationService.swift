@@ -4,27 +4,66 @@ import UserNotifications
 // Service to handle notifications
 class NotificationService {
     static let shared = NotificationService()
+    private var notificationsAuthorized = false
     
     private init() {
-        requestPermissions()
+        checkPermissions()
+    }
+    
+    // Check notification permissions
+    func checkPermissions() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                switch settings.authorizationStatus {
+                case .authorized:
+                    self.notificationsAuthorized = true
+                    print("Notification permissions already granted")
+                case .denied:
+                    self.notificationsAuthorized = false
+                    print("Notification permissions denied")
+                case .notDetermined:
+                    self.requestPermissions()
+                case .provisional, .ephemeral:
+                    self.notificationsAuthorized = true
+                    print("Notification permissions provisionally granted")
+                @unknown default:
+                    self.requestPermissions()
+                }
+            }
+        }
     }
     
     // Request notification permissions
     func requestPermissions() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if granted {
-                print("Notification permissions granted")
-            } else if let error = error {
-                print("Error requesting notification permissions: \(error)")
+            DispatchQueue.main.async {
+                if granted {
+                    self.notificationsAuthorized = true
+                    print("Notification permissions granted")
+                } else {
+                    self.notificationsAuthorized = false
+                    if let error = error {
+                        print("Error requesting notification permissions: \(error)")
+                    } else {
+                        print("Notification permissions were not granted")
+                    }
+                }
             }
         }
     }
     
     // Show a basic notification
     func showNotification(title: String, body: String) {
-        // Check if notifications are enabled
+        // Check if notifications are enabled in app settings
         if !AppSettings.shared.notificationsEnabled {
-            print("Notifications disabled, skipping notification: \(title)")
+            print("Notifications disabled in app settings, skipping notification: \(title)")
+            return
+        }
+        
+        // Check if notifications are authorized by the system
+        if !notificationsAuthorized {
+            print("Notifications not authorized by system, rechecking permissions")
+            checkPermissions()
             return
         }
         
@@ -33,10 +72,22 @@ class NotificationService {
         content.body = body
         content.sound = UNNotificationSound.default
         
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        // Add app identifier to avoid conflicts with other apps
+        let identifier = "com.hfjobs.menubar.\(UUID().uuidString)"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
                 print("Error showing notification: \(error)")
+                
+                // If we get an authorization error, update our state and try re-requesting permissions
+                if error.localizedDescription.contains("denied") || 
+                   error.localizedDescription.contains("not authorized") {
+                    DispatchQueue.main.async {
+                        self.notificationsAuthorized = false
+                        self.requestPermissions()
+                    }
+                }
             }
         }
     }

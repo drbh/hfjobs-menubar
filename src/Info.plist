@@ -28,5 +28,7 @@
     <true/>
     <key>NSUserNotificationAlertStyle</key>
     <string>alert</string>
+    <key>NSUserNotificationsUsageDescription</key>
+    <string>HFJobs needs to send notifications about job status changes.</string>
 </dict>
 </plist>
