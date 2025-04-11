@@ -1,12 +1,14 @@
 # hf jobs menubar app
 
-This is a simple menubar app that shows the current Hugging Face job statuses.
+A small macOS menubar app to watch the status of your Hugging Face jobs.
 
-## Quick start
+## Quick start (on M series Mac)
 
 ```bash
-curl -OL https://github.com/drbh/hfjobs-menubar/releases/download/v0.0.1/HFJobs.zip && unzip HFJobs.zip
-open -a HFJobs.app
+curl \
+  -sOL https://github.com/drbh/hfjobs-menubar/releases/download/v0.0.1/HFJobs.zip && \
+  unzip HFJobs.zip && \
+  open -a HFJobs.app
 ```
 
 ## Installation (build it yourself)
@@ -15,7 +17,7 @@ open -a HFJobs.app
 make
 ```
 
-## Run
+### Run
 
 ```bash
 open HFJobs.app
