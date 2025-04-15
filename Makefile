@@ -20,6 +20,12 @@ build:
 	@swiftc -target $(ARCH)-apple-macosx14.0 -o HFJobs.app/Contents/MacOS/HFJobs -parse-as-library \
 		src/Models.swift \
 		src/JobService.swift \
+		src/LogsStreamService.swift \
+		src/MetricsService.swift \
+		src/MetricsObservable.swift \
+		src/LogsObservable.swift \
+		src/LogsViewComponents.swift \
+		src/MetricsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \
@@ -35,6 +41,12 @@ build-intel:
 	@swiftc -target $(ARCH_INTEL)-apple-macosx14.0 -o build/$(ARCH_INTEL)/HFJobs.app/Contents/MacOS/HFJobs -parse-as-library \
 		src/Models.swift \
 		src/JobService.swift \
+		src/LogsStreamService.swift \
+		src/MetricsService.swift \
+		src/MetricsObservable.swift \
+		src/LogsObservable.swift \
+		src/LogsViewComponents.swift \
+		src/MetricsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \
@@ -50,6 +62,12 @@ build-arm:
 	@swiftc -target $(ARCH_ARM)-apple-macosx14.0 -o build/$(ARCH_ARM)/HFJobs.app/Contents/MacOS/HFJobs -parse-as-library \
 		src/Models.swift \
 		src/JobService.swift \
+		src/LogsStreamService.swift \
+		src/MetricsService.swift \
+		src/MetricsObservable.swift \
+		src/LogsObservable.swift \
+		src/LogsViewComponents.swift \
+		src/MetricsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \

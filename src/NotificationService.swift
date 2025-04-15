@@ -17,7 +17,6 @@ class NotificationService {
                 switch settings.authorizationStatus {
                 case .authorized:
                     self.notificationsAuthorized = true
-                    print("Notification permissions already granted")
                 case .denied:
                     self.notificationsAuthorized = false
                     print("Notification permissions denied")

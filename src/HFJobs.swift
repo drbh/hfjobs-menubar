@@ -346,10 +346,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         // Apply filter based on the selected view option
         let viewOption = sender.title
-        
-        // // Keep the menu open by preventing the default menu closure behavior
-        // NSApp.mainMenu?.cancelTracking()
-        // statusItem.button?.performClick(nil)
+
         
         Task {
             await MainActor.run {
@@ -444,7 +441,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Update any open job detail windows with fresh data
         for job in jobs {
             if let windowController = activeJobWindows[job.id] {
-                windowController.updateJob(job)
+                // TODO: handle state changes without clearing logs
+                
+                // windowController.updateJob(job)
+
+                // // and the state has changed
+                // if windowController.job.status.stage != job.status.stage {
+                //     windowController.updateJob(job)
+                // }
             }
         }
         
