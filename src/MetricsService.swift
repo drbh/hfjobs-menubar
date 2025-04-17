@@ -83,8 +83,6 @@ struct GPUMetrics: Codable, Equatable {
     let memoryUsedBytes: Int?
     let memoryTotalBytes: Int?
     let temperature: Double?
-    let powerDraw: Double?
-    let powerLimit: Double?
     
     // Computed properties for formatting
     var memoryUsedFormatted: String {
@@ -102,11 +100,6 @@ struct GPUMetrics: Codable, Equatable {
         return String(format: "%.1f°C", temp)
     }
     
-    var powerFormatted: String {
-        guard let draw = powerDraw, let limit = powerLimit else { return "N/A" }
-        return String(format: "%.1fW / %.1fW", draw, limit)
-    }
-    
     // Coding keys for JSON decoding
     enum CodingKeys: String, CodingKey {
         case gpuUtilization = "gpu_utilization"
@@ -114,8 +107,6 @@ struct GPUMetrics: Codable, Equatable {
         case memoryUsedBytes = "memory_used_bytes"
         case memoryTotalBytes = "memory_total_bytes"
         case temperature
-        case powerDraw = "power_draw"
-        case powerLimit = "power_limit"
     }
     
     // Helper formatting function

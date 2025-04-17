@@ -98,6 +98,35 @@ class JobLogsStreamHandler: JobLogsStreamDelegate {
         let jobLogs = HFJobLogs(logEntries: logBuffer)
         logsObservable.update(logs: jobLogs)
     }
+
+
+    // Convert many log lines to proper structure and update the observable
+    func didReceiveLogLines(_ lines: [String], timestamps: [Date?]) {
+        if !hasReceivedLogs {
+            hasReceivedLogs = true
+            print("✅ Received first batch of log lines")
+        }
+        
+        // Convert Date to timestamp string if available
+        let timestampStrings: [String] = timestamps.map { timestamp in
+            if let timestamp = timestamp {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+                return formatter.string(from: timestamp)
+            } else {
+                return ""
+            }
+        }
+        
+        // Add to log buffer
+        for (index, line) in lines.enumerated() {
+            logBuffer.append(LogEntry(timestamp: timestampStrings[index], message: line))
+        }
+        
+        // Update the observable with the new entries
+        let jobLogs = HFJobLogs(logEntries: logBuffer)
+        logsObservable.update(logs: jobLogs)
+    }
     
     func didEncounterError(_ error: Error) {
         let errorMessage = JobService.shared.errorMessage(for: error)

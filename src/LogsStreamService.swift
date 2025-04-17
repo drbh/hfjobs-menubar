@@ -15,6 +15,7 @@ struct HFJobLogs: Equatable {
 // Define the delegate protocol
 protocol JobLogsStreamDelegate: AnyObject {
     func didReceiveLogLine(_ line: String, timestamp: Date?)
+    func didReceiveLogLines(_ lines: [String], timestamps: [Date?])
     func didEncounterError(_ error: Error)
     func didCompleteStream()
 }
@@ -208,13 +209,14 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
     
     private func processBuffer() {
         // Look for complete lines in the buffer (terminated by \n)
+        var logEntries: [(String, Date?)] = []
+        
         while let newlineIndex = buffer.firstIndex(of: 10) { // ASCII for '\n'
             let lineData = buffer.prefix(upTo: newlineIndex)
             buffer = buffer.suffix(from: newlineIndex + 1)
             
             // Convert line data to string
             if let line = String(data: lineData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-
                 // Handle "event: log" line
                 if line == "event: log" {
                     continue
@@ -225,7 +227,6 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                     let jsonStart = line.index(line.startIndex, offsetBy: "data: ".count)
                     let jsonString = String(line[jsonStart...])
                     
-                    // print("🧩 JSON: \(jsonString)")
                     logsStarted = true
                     
                     // Try to decode the log entry
@@ -241,10 +242,8 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                                     return dateFormatter.date(from: logEntry.timestamp)
                                 }() : nil
                                 
-                                // Notify delegate on main thread
-                                DispatchQueue.main.async { [weak self] in
-                                    self?.currentDelegate?.didReceiveLogLine(logEntry.data, timestamp: timestamp)
-                                }
+                                // Add to batch instead of notifying immediately
+                                logEntries.append((logEntry.data, timestamp))
                             }
                         } catch {
                             os_log("❌ Error decoding log entry: %@", error.localizedDescription)
@@ -258,8 +257,19 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                 }
             }
         }
+        
+        // If we collected any log entries, notify delegate with the batch
+        if !logEntries.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                // Split into lines and timestamps
+                let lines = logEntries.map { $0.0 }
+                let timestamps = logEntries.map { $0.1 }
+                
+                self?.currentDelegate?.didReceiveLogLines(lines, timestamps: timestamps)
+            }
+        }
     }
-    
+
     func cancelLogStream() {
         print("🛑 Cancelling log stream")
         logStreamTask?.cancel()

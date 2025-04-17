@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 // MARK: - Metrics View Components
 
@@ -154,18 +155,6 @@ struct GPUCard: View {
                     .groupBoxStyle(PlainGroupBoxStyle())
                 }
                 
-                if metrics.powerDraw != nil && metrics.powerLimit != nil {
-                    GroupBox {
-                        VStack(alignment: .leading) {
-                            Text("Power Usage")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(metrics.powerFormatted)
-                                .font(.body)
-                        }
-                    }
-                    .groupBoxStyle(PlainGroupBoxStyle())
-                }
             }
         }
         .padding()
@@ -197,6 +186,47 @@ struct PlainGroupBoxStyle: GroupBoxStyle {
         .padding(8)
         .background(Color(.textBackgroundColor).opacity(0.2))
         .cornerRadius(4)
+    }
+}
+
+/// Line chart view for displaying metric trends
+@available(macOS 13.0, iOS 16.0, *)
+struct MetricsLineChart: View {
+    let data: [ChartDataPoint]
+    @State private var selectedMetric: MetricType = .gpu
+
+    enum MetricType: String, CaseIterable, Identifiable {
+        case cpu = "CPU Usage"
+        case memory = "Memory Usage"
+        case gpu = "GPU Utilization"
+        var id: String { rawValue }
+    }
+
+    private func value(for point: ChartDataPoint) -> Double {
+        switch selectedMetric {
+        case .cpu: return point.cpuUsage
+        case .memory: return point.memoryUsage
+        case .gpu: return point.gpuUtilization
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Picker("", selection: $selectedMetric) {
+                ForEach(MetricType.allCases) { type in
+                    Text(type.rawValue).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Chart(data) { point in
+                LineMark(
+                    x: .value("Time", point.timestamp),
+                    y: .value(selectedMetric.rawValue, value(for: point))
+                )
+                .interpolationMethod(.catmullRom)
+            }
+        }
     }
 }
 

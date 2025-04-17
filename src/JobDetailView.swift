@@ -33,15 +33,19 @@ class JobDetailWindowController: NSWindowController {
         self.onClose = onClose
         
         // Create the window with appropriate size
+        // Define initial and minimum window size
+        let initialWidth: CGFloat = 600
+        let initialHeight: CGFloat = 860
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), // More appropriate default size
+            contentRect: NSRect(x: 0, y: 0, width: initialWidth, height: initialHeight),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         
-        // Center the window on screen
+        // Center the window on screen and enforce minimum size
         window.center()
+        window.minSize = NSSize(width: initialWidth, height: initialHeight)
         
         // Use a unique autosave name based on job ID
         window.setFrameAutosaveName("JobDetailWindow-\(job.id)")
@@ -264,7 +268,7 @@ struct JobDetailView: View {
             // Content tabs
             contentTabsView
         }
-        .frame(minWidth: 600, minHeight: 1000)
+        .frame(minWidth: 600, minHeight: 800)
     }
     
     private var contentTabsView: some View {
@@ -476,7 +480,8 @@ struct JobDetailView: View {
         VStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
+                    // Use LazyVStack to improve performance with large log lists
+                    LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(logs.logEntries.indices, id: \.self) { index in
                             LogEntryRow(entry: logs.logEntries[index], showTimestamp: showTimestamps)
                         }
@@ -669,7 +674,23 @@ struct JobDetailView: View {
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .center)
             } else if let metrics = metricsObservable.currentMetrics {
-                MetricsGridView(metrics: metrics)
+                if #available(macOS 13.0, iOS 16.0, *) {
+                    MetricsLineChart(data: metricsObservable.getTimeSeriesData())
+                        .frame(height: 200)
+                        .padding(.horizontal)
+                } else {
+                    MetricsGridView(metrics: metrics)
+                }
+                MetricsCard(
+                    title: "Summary",
+                    metrics:
+                        [MetricItem(name: "CPU Usage", value: String(format: "%.1f%%", metrics.cpuUsagePct)),
+                         MetricItem(name: "Memory Usage", value: String(format: "%.1f%%", metrics.memoryUsagePercent))]
+                        + (metrics.gpus.values.first.map { gpuMetrics in
+                            [MetricItem(name: "GPU Utilization", value: String(format: "%.1f%%", gpuMetrics.gpuUtilization ?? 0))]
+                        } ?? [])
+                )
+                .padding(.horizontal)
             } else if metricsObservable.isLoading {
                 MetricsLoadingView()
             } else if let error = metricsObservable.errorMessage {

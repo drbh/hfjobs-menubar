@@ -59,11 +59,17 @@ class MetricsObservable: ObservableObject {
     func getTimeSeriesData() -> [ChartDataPoint] {
         let sortedData = metricsHistory.sorted { $0.key < $1.key }
         return sortedData.map { (date, metrics) in
-            ChartDataPoint(
+            // Compute average GPU utilization
+            let gpuMetricsArray = metrics.gpus.values
+            let avgGPUUtil: Double = {
+                let utils = gpuMetricsArray.compactMap { $0.gpuUtilization }
+                return utils.isEmpty ? 0 : utils.reduce(0, +) / Double(utils.count)
+            }()
+            return ChartDataPoint(
                 timestamp: date,
                 cpuUsage: metrics.cpuUsagePct,
                 memoryUsage: metrics.memoryUsagePercent,
-                gpuUtilization: metrics.gpus.first?.value.gpuUtilization ?? 0
+                gpuUtilization: avgGPUUtil
             )
         }
     }

@@ -55,7 +55,8 @@ struct LogsSummaryView: View {
             // Log content with fixed height
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
+                    // Use LazyVStack for better performance with many log entries
+                    LazyVStack(alignment: .leading, spacing: 2) {
                         if filteredLogs.isEmpty {
                             // Show empty state
                             VStack(spacing: 8) {
@@ -90,13 +91,15 @@ struct LogsSummaryView: View {
                                 )
                             }
                             .padding(.horizontal, 8)
-                            
-                            // Add invisible view at the end for scrolling target
-                            Color.clear
-                                .frame(height: 1)
-                                .id("logsEnd")
                         }
                     }
+                    .padding(8)
+
+                    // Add invisible view at the end for scrolling target
+                    Color.clear
+                        .frame(height: 1)
+                        .id("logsEnd")
+
                 }
                 .frame(maxHeight: 300)
                 .padding(.vertical, 8)
