@@ -167,7 +167,7 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            print("❌ Stream task completed with error: \(error)")
+            print("❌ [Log Service] Stream task completed with error: \(error)")
             
             if (error as NSError).domain == NSURLErrorDomain {
                 print("🔍 URL error code: \((error as NSError).code)")

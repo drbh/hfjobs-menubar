@@ -34,8 +34,8 @@ class JobDetailWindowController: NSWindowController {
         
         // Create the window with appropriate size
         // Define initial and minimum window size
-        let initialWidth: CGFloat = 600
-        let initialHeight: CGFloat = 860
+        let initialWidth: CGFloat = 800
+        let initialHeight: CGFloat = 1200
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: initialWidth, height: initialHeight),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -81,6 +81,10 @@ class JobDetailWindowController: NSWindowController {
         
         // Set delegate
         window.delegate = self
+
+        // Attempt to focus the window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         
         // Fetch initial data
         print("🔄 Fetching initial job data")
@@ -95,19 +99,68 @@ class JobDetailWindowController: NSWindowController {
     func updateJob(_ job: HFJob) {
         print("🔄 Updating job data")
         
+        // Check if there's a state change
+        let oldState = jobObservable.job.status.stage
+        let newState = job.status.stage
+        let stateChanged = oldState != newState
+        
+        // Update the observable job
         jobObservable.update(job: job)
         
         // Update window title
         window?.title = "Job: \(job.displayName)"
-
-        // only fetch metrics if not COMPLETED
-        if job.status.stage != "COMPLETED" && job.status.stage != "ERROR" {
-            // Fetch job logs
-            fetchJobLogs()
+        
+        // Handle state transitions
+        if stateChanged {
+            print("📊 Job state changed from \(oldState) to \(newState)")
             
-            // Fetch job metrics
-            fetchJobMetrics()
+            // If job completed or failed, show notification
+            if newState == "COMPLETED" || newState == "ERROR" {
+                NotificationService.shared.showNotification(
+                    title: "Job Status Changed",
+                    body: "Job '\(job.displayName)' changed from \(oldState) to \(newState)"
+                )
+                
+                // Stop streaming metrics but keep logs available
+                MetricsService.shared.cancelMetricsStream()
+            } else if newState == "RUNNING" && (oldState == "PENDING" || oldState == "QUEUED") {
+                // If job just started running, refresh both logs and metrics
+                fetchJobLogs()
+                fetchJobMetrics()
+            }
+        } else {
+            // Only update metrics and logs for running jobs
+            if newState == "RUNNING" {
+                // Only start metrics if not already streaming
+                if metricsObservable.currentMetrics == nil {
+                    fetchJobMetrics()
+                }
+                
+                // Only start logs if not already streaming
+                if logObservable.currentLogs == nil {
+                    fetchJobLogs()
+                }
+            }
         }
+    }
+
+    private func shouldRefreshData(oldJob: HFJob, newJob: HFJob) -> Bool {
+        // Always refresh if status changed
+        if oldJob.status.stage != newJob.status.stage {
+            return true
+        }
+        
+        // For running jobs, refresh every minute
+        if newJob.status.stage == "RUNNING" {
+            guard let oldDate = oldJob.creationDate, let newDate = newJob.creationDate else {
+                return true
+            }
+            
+            // Check if it's been more than 60 seconds since last refresh
+            return newDate.timeIntervalSince(oldDate) > 60
+        }
+        
+        return false
     }
     
     // Implement NSWindowDelegate to handle window resizing
@@ -248,6 +301,12 @@ struct JobDetailView: View {
     // Window management
     var job: HFJob { jobObservable.job }
     var windowController: NSWindowController?
+
+    // State + timer to tick every second
+    @State private var currentDate = Date()
+    private let timer = Timer
+        .publish(every: 1, on: .main, in: .common)
+        .autoconnect()
     
     // Grid layout for details section
     private let columns = [
@@ -291,7 +350,9 @@ struct JobDetailView: View {
     
     private var statusTabView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Spacer()
+
                 // Metrics section
                 metricsSection
                 
@@ -307,7 +368,7 @@ struct JobDetailView: View {
     }
 
     private var logsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 8) {
             // Logs section header
             HStack {
                 Text("Logs")
@@ -505,192 +566,197 @@ struct JobDetailView: View {
         .padding(.horizontal)
     }
 
-
-    // Modify the jobHeaderBar to include job details
-    private var jobHeaderBar: some View {
-        VStack(spacing: 8) {
-            HStack {
-                // Job name and status
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(job.displayName)
-                            .font(.headline)
-                            .lineLimit(1)
-                        
-                        if let spaceId = job.spec.spaceId, !spaceId.isEmpty {
-                            Button {
-                                if let spaceURL = job.spaceURL {
-                                    NSWorkspace.shared.open(spaceURL)
-                                }
-                            } label: {
-                                Image(systemName: "arrow.up.forward.square")
-                                    .font(.caption)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Open space in browser")
-                            .focusable(false)
-                        }
-                    }
-                    
-                    HStack(spacing: 6) {
-                        // Text(job.statusEmoji)
-                        Text(job.status.stage)
-                            .font(.subheadline)
-                            .foregroundColor(Color(hex: job.statusColor))
-                        
-                        if let message = job.status.message, !message.isEmpty {
-                            Text("- \(message)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                // Actions
-                HStack(spacing: 12) {
-                    Text(job.formattedCreationDate)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    // Show staus badge in all states
-                    if job.status.stage == "RUNNING" || job.status.stage == "UPDATING" {
-                        Image(systemName: "circle.fill")
-                            .foregroundColor(Color(hex: job.statusColor))
-                            .frame(width: 12, height: 12)
-                    } else {
-                        Image(systemName: "circle")
-                            .foregroundColor(Color(hex: job.statusColor))
-                            .frame(width: 12, height: 12)
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 16) {
-                // Job details grid
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                    // Job ID
-                    VStack(alignment: .leading) {
-                        Text("Job ID")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(job.id)
-                            .font(.caption)
-                            .monospaced()
-                    }
-                    
-                    // Owner
-                    VStack(alignment: .leading) {
-                        Text("Owner")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(job.metadata.owner.name)
-                            .font(.caption)
-                    }
-                    
-                    // Hardware Flavor
-                    VStack(alignment: .leading) {
-                        Text("Hardware")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(job.spec.flavor)
-                            .font(.caption)
-                    }
-                    
-                    // Creation Date
-                    VStack(alignment: .leading) {
-                        Text("Created")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        if let date = job.creationDate {
-                            Text(date, style: .date)
-                                .font(.caption)
-                        } else {
-                            Text(job.metadata.createdAt)
-                                .font(.caption)
-                        }
-                    }
-                    
-                    // Docker Image
-                    if let dockerImage = job.spec.dockerImage, !dockerImage.isEmpty {
-                        VStack(alignment: .leading) {
-                            Text("Docker Image")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(dockerImage)
-                                .font(.caption)
-                                .monospaced()
-                                .lineLimit(1)
-                        }
-                        .gridCellColumns(2)
-                    }
-                    
-                    // Command
-                    VStack(alignment: .leading) {
-                        Text("Command")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(job.spec.command.joined(separator: " "))
-                            .font(.caption)
-                            .monospaced()
-                            .lineLimit(2)
-                    }
-                    .gridCellColumns(2)
-                }
-                .padding(.horizontal)
-            }
-            .padding(.vertical, 8)
+    private var sinceStartString: String {
+        guard let start = job.creationDate else { return "--" }
+        
+        // For completed or error jobs, show start to end times
+        if job.status.stage == "COMPLETED" || job.status.stage == "ERROR" {
+            // We don't have an actual end time, so estimate based on the status change
+            // In a real implementation, you might want to store the completion time
+            let formattedStart = formatDate(start)
+            return "Start: \(formattedStart)"
+        } else {
+            // For running jobs, show runtime in real-time
+            let elapsed = currentDate.timeIntervalSince(start)
+            return "Runtime: \(formatElapsed(elapsed))"
         }
-        .padding()
-        .background(Color(.windowBackgroundColor).opacity(0.5))
     }
 
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func formatElapsed(_ interval: TimeInterval) -> String {
+        let formatter = DateComponentsFormatter()
         
-    // MARK: - Metrics Section
-    private var metricsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Section header
-            HStack {
-                Text("Metrics")
-                    .font(.headline)
+        // Switch format based on duration
+        if interval >= 86400 { // > 1 day
+            formatter.allowedUnits = [.day, .hour, .minute]
+        } else if interval >= 3600 { // > 1 hour
+            formatter.allowedUnits = [.hour, .minute, .second]
+        } else {
+            formatter.allowedUnits = [.minute, .second]
+        }
+        
+        formatter.unitsStyle = .abbreviated
+        formatter.zeroFormattingBehavior = .dropLeading
+        return formatter.string(from: interval) ?? "0s"
+    }
+
+    private var jobHeaderBar: some View {
+        VStack(spacing: 4) {
+            // Top row: Job name, status and indicators in a compact layout
+            HStack(alignment: .center, spacing: 8) {
+                // Left side: Job name with space link
+                HStack(spacing: 4) {
+                    Text(job.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    
+                    if let spaceId = job.spec.spaceId, !spaceId.isEmpty {
+                        Button {
+                            if let spaceURL = job.spaceURL {
+                                NSWorkspace.shared.open(spaceURL)
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.forward.square")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open space in browser")
+                        .focusable(false)
+                    }
+                }
+                
+                // Error message if present
+                if let message = job.status.message, !message.isEmpty {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 
                 Spacer()
                 
-                if job.status.stage == "RUNNING" {
-                    Text("Updating as events stream in")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                VStack(spacing: 4) {
+                    // Status pill
+                    HStack(spacing: 4) {
+                        Image(systemName: job.status.stage == "RUNNING" || job.status.stage == "UPDATING" 
+                            ? "circle.fill" : "circle")
+                            .foregroundColor(Color(hex: job.statusColor))
+                            .frame(width: 10, height: 10)
+                        
+                        Text(job.status.stage)
+                            .font(.caption.bold())
+                            .foregroundColor(Color(hex: job.statusColor))
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 4)
+                            .background(Color(hex: job.statusColor).opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    
+                    // Right side: Runtime or timing information with clock icon
+                    HStack(spacing: 6) {
+                        // Clock icon differs based on job status
+                        Image(systemName: job.status.stage == "RUNNING" ? "clock.arrow.circlepath" : "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(sinceStartString)
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
-            .padding(.horizontal)
+            
+            // Main details in a 3-column grid to maximize horizontal space
+            LazyVGrid(columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ], alignment: .leading, spacing: 8) {
+                // Row 1: ID, Owner, Hardware
+                detailItem(label: "ID", value: job.id.prefix(10) + "...")
+                detailItem(label: "Owner", value: job.metadata.owner.name)
+                detailItem(label: "Hardware", value: job.spec.flavor)
+                
+                // Row 2: Created, Docker Image/Command
+                if let date = job.creationDate {
+                    detailItem(label: "Created", value: date.formatted(date: .abbreviated, time: .shortened))
+                } else {
+                    detailItem(label: "Created", value: job.metadata.createdAt)
+                }
+                
+                // Command (spans 2 columns)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Command")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(job.spec.command.joined(separator: " "))
+                        .font(.caption)
+                        .monospaced()
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .gridCellColumns(2)
+            }
+            .padding(.top, 4)
+        }
+        .padding(8) // Reduced padding
+        .background(Color(.windowBackgroundColor).opacity(0.5))
+        .onReceive(timer) { now in
+            self.currentDate = now
+        }
+    }
+
+    // Helper function for detail items
+    private func detailItem(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.caption)
+                .lineLimit(1)
+        }
+    }
+
+    private var metricsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
             
             // Metrics content
-            if job.status.stage == "COMPLETED" {
+            if job.status.stage == "COMPLETED" || job.status.stage == "ERROR" {
                 Text("Metrics are only available for running jobs")
                     .foregroundColor(.secondary)
                     .padding()
                     .frame(maxWidth: .infinity, alignment: .center)
             } else if let metrics = metricsObservable.currentMetrics {
+                // Charts section
                 if #available(macOS 13.0, iOS 16.0, *) {
                     MetricsLineChart(data: metricsObservable.getTimeSeriesData())
                         .frame(height: 200)
                         .padding(.horizontal)
-                } else {
-                    MetricsGridView(metrics: metrics)
+                } 
+                
+                // Enhanced metrics summary card
+                enhancedMetricsCard(metrics: metrics)
+                    .padding(.horizontal)
+                
+                // Network card
+                networkMetricsCard(metrics: metrics)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+                
+                // GPU cards if available
+                if !metrics.gpus.isEmpty {
+                    gpuMetricsCards(metrics: metrics)
+                        .padding(.horizontal)
+                        .padding(.top, 4)
                 }
-                MetricsCard(
-                    title: "Summary",
-                    metrics:
-                        [MetricItem(name: "CPU Usage", value: String(format: "%.1f%%", metrics.cpuUsagePct)),
-                         MetricItem(name: "Memory Usage", value: String(format: "%.1f%%", metrics.memoryUsagePercent))]
-                        + (metrics.gpus.values.first.map { gpuMetrics in
-                            [MetricItem(name: "GPU Utilization", value: String(format: "%.1f%%", gpuMetrics.gpuUtilization ?? 0))]
-                        } ?? [])
-                )
-                .padding(.horizontal)
             } else if metricsObservable.isLoading {
                 MetricsLoadingView()
             } else if let error = metricsObservable.errorMessage {
@@ -698,6 +764,266 @@ struct JobDetailView: View {
             } else {
                 MetricsUnavailableView()
             }
+        }
+    }
+
+    // Enhanced metrics card with percentages and nominal values
+    private func enhancedMetricsCard(metrics: HFJobMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Resource Usage")
+                .font(.headline)
+                .padding(.bottom, 2)
+            
+            // CPU usage with both percentage and cores
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("CPU Usage")
+                        .font(.subheadline)
+                    
+                    Spacer()
+                    
+                    let cpuUsagePct = metrics.cpuUsagePct
+                    let cpuCoresUsed = Double(metrics.cpuMillicores) / 1000.0
+                    let totalCores: Int = {
+                        guard cpuUsagePct > 0 else { return 0 }
+                        return Int(ceil(cpuCoresUsed / (cpuUsagePct / 100.0)))
+                    }()
+
+                    Text(String(format: "%.1f%% (%.2f cores of %d)", 
+                                cpuUsagePct, 
+                                cpuCoresUsed, 
+                                totalCores))
+                        .font(.subheadline)
+                        .monospacedDigit()
+
+                }
+                
+                // Progress bar for CPU
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        // Background
+                        Rectangle()
+                            .frame(width: geometry.size.width, height: 8)
+                            .opacity(0.2)
+                            .foregroundColor(.orange)
+                            .cornerRadius(4)
+                        
+                        // Progress
+                        Rectangle()
+                            .frame(width: min(CGFloat(metrics.cpuUsagePct) * geometry.size.width / 100, geometry.size.width), height: 8)
+                            .foregroundColor(.orange)
+                            .cornerRadius(4)
+                    }
+                }
+                .frame(height: 8)
+            }
+            
+            // Memory usage with both percentage and size
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Memory Usage")
+                        .font(.subheadline)
+                    
+                    Spacer()
+                    
+                    Text(String(format: "%.1f%% (%@ of %@)", 
+                            metrics.memoryUsagePercent,
+                            metrics.memoryUsedFormatted,
+                            metrics.memoryTotalFormatted))
+                        .font(.subheadline)
+                        .monospacedDigit()
+                }
+                
+                // Progress bar for Memory
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        // Background
+                        Rectangle()
+                            .frame(width: geometry.size.width, height: 8)
+                            .opacity(0.2)
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                        
+                        // Progress
+                        Rectangle()
+                            .frame(width: min(CGFloat(metrics.memoryUsagePercent) * geometry.size.width / 100, geometry.size.width), height: 8)
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                    }
+                }
+                .frame(height: 8)
+            }
+        }
+        .padding()
+        .background(Color(.textBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
+    }
+
+    // Network metrics card
+    private func networkMetricsCard(metrics: HFJobMetrics) -> some View {
+        HStack(spacing: 20) {
+            // Download
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundColor(.green)
+                    Text("Download")
+                        .font(.subheadline)
+                }
+                Text(metrics.networkRxFormatted)
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
+            // Upload  
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Image(systemName: "arrow.up.circle")
+                        .foregroundColor(.blue)
+                    Text("Upload")
+                        .font(.subheadline)
+                }
+                Text(metrics.networkTxFormatted)
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding()
+        .background(Color(.textBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
+    }
+
+    // GPU metrics cards
+    private func gpuMetricsCards(metrics: HFJobMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("GPU Resources")
+                .font(.headline)
+                .padding(.bottom, 2)
+            
+            ForEach(Array(metrics.gpus.keys.sorted()), id: \.self) { gpuName in
+                if let gpu = metrics.gpus[gpuName] {
+                    singleGpuCard(name: gpuName, gpu: gpu)
+                }
+            }
+        }
+    }
+
+    // Single GPU card
+    private func singleGpuCard(name: String, gpu: GPUMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(name)
+                .font(.headline)
+                .padding(.bottom, 2)
+            
+            // GPU utilization with percentage
+            if let utilization = gpu.gpuUtilization {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("GPU Utilization")
+                            .font(.subheadline)
+                        
+                        Spacer()
+                        
+                        Text(String(format: "%.1f%%", utilization))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                    }
+                    
+                    // Progress bar for GPU
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            // Background
+                            Rectangle()
+                                .frame(width: geometry.size.width, height: 8)
+                                .opacity(0.2)
+                                .foregroundColor(.green)
+                                .cornerRadius(4)
+                            
+                            // Progress
+                            Rectangle()
+                                .frame(width: min(CGFloat(utilization) * geometry.size.width / 100, geometry.size.width), height: 8)
+                                .foregroundColor(.green)
+                                .cornerRadius(4)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+            }
+            
+            // GPU memory with percentage and size
+            if let memUtil = gpu.memoryUtilization, 
+            let memUsed = gpu.memoryUsedBytes, 
+            let memTotal = gpu.memoryTotalBytes {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("GPU Memory")
+                            .font(.subheadline)
+                        
+                        Spacer()
+                        
+                        Text(String(format: "%.1f%% (%@ of %@)", 
+                                memUtil,
+                                gpu.memoryUsedFormatted,
+                                gpu.memoryTotalFormatted))
+                            .font(.subheadline)
+                            .monospacedDigit()
+                    }
+                    
+                    // Progress bar for GPU Memory
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            // Background
+                            Rectangle()
+                                .frame(width: geometry.size.width, height: 8)
+                                .opacity(0.2)
+                                .foregroundColor(.blue)
+                                .cornerRadius(4)
+                            
+                            // Progress
+                            Rectangle()
+                                .frame(width: min(CGFloat(memUtil) * geometry.size.width / 100, geometry.size.width), height: 8)
+                                .foregroundColor(.blue)
+                                .cornerRadius(4)
+                        }
+                    }
+                    .frame(height: 8)
+                }
+            }
+            
+            // GPU temperature if available
+            if let temp = gpu.temperature {
+                HStack {
+                    Text("Temperature")
+                        .font(.subheadline)
+                    
+                    Spacer()
+                    
+                    Text(gpu.temperatureFormatted)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundColor(temperatureColor(temp))
+                }
+            }
+        }
+        .padding()
+        .background(Color(.textBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
+    }
+
+    // Helper function to determine temperature color
+    private func temperatureColor(_ temp: Double) -> Color {
+        if temp > 85 {
+            return .red
+        } else if temp > 75 {
+            return .orange
+        } else if temp > 65 {
+            return .yellow
+        } else {
+            return .green
         }
     }
 }

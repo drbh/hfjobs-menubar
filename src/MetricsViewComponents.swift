@@ -193,7 +193,7 @@ struct PlainGroupBoxStyle: GroupBoxStyle {
 @available(macOS 13.0, iOS 16.0, *)
 struct MetricsLineChart: View {
     let data: [ChartDataPoint]
-    @State private var selectedMetric: MetricType = .gpu
+    @State private var selectedMetric: MetricType = .memory
 
     enum MetricType: String, CaseIterable, Identifiable {
         case cpu = "CPU Usage"
@@ -209,6 +209,25 @@ struct MetricsLineChart: View {
         case .gpu: return point.gpuUtilization
         }
     }
+    
+    private var gradientColors: [Color] {
+        switch selectedMetric {
+        case .cpu:
+            return [Color.orange.opacity(0.6), Color.orange.opacity(0)]
+        case .memory:
+            return [Color.blue.opacity(0.6), Color.blue.opacity(0)]
+        case .gpu:
+            return [Color.green.opacity(0.6), Color.green.opacity(0)]
+        }
+    }
+    
+    private var lineColor: Color {
+        switch selectedMetric {
+        case .cpu: return .orange
+        case .memory: return .blue
+        case .gpu: return .green
+        }
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -219,13 +238,53 @@ struct MetricsLineChart: View {
             }
             .pickerStyle(.segmented)
 
-            Chart(data) { point in
-                LineMark(
-                    x: .value("Time", point.timestamp),
-                    y: .value(selectedMetric.rawValue, value(for: point))
-                )
-                .interpolationMethod(.catmullRom)
+            Chart {
+                ForEach(data) { point in
+                    LineMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value(selectedMetric.rawValue, value(for: point))
+                    )
+                    .foregroundStyle(lineColor)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    .interpolationMethod(.catmullRom)
+                    
+                    AreaMark(
+                        x: .value("Time", point.timestamp),
+                        y: .value(selectedMetric.rawValue, value(for: point))
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: gradientColors,
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.catmullRom)
+                }
             }
+            .chartYScale(domain: 0...100)
+            .chartYAxis {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisValueLabel("\(value.as(Int.self) ?? 0)%")
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            let formatter = DateFormatter()
+                            formatter.timeStyle = .short
+                            formatter.dateStyle = .none
+                            return Text(formatter.string(from: date))
+                        }
+                        return Text("")
+                    }
+                }
+            }
+            .frame(height: 200)
+            .padding(.top, 8)
         }
     }
 }

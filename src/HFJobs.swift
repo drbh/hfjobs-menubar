@@ -144,7 +144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let jobViewMenuItem = NSMenuItem(title: "View Jobs", action: nil, keyEquivalent: "")
         let jobViewSubmenu = NSMenu()
         
-        let viewOptions = ["All", "In Last 5 Minutes", "In Last Day", "Running", "Completed", "Failed"]
+        let viewOptions = ["All", "In Last 5 Minutes", "In Last Day", "In Last Week", "In Last Month", "Running", "Completed", "Failed"]
         
         for option in viewOptions {
             let item = NSMenuItem(title: option, action: #selector(switchJobView(_:)), keyEquivalent: "")
@@ -297,7 +297,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 }
                 return currentDate.timeIntervalSince(date) <= 86400 // 1 day = 86400 seconds
             }
-        } 
+        } else if filter == "In Last Week" {
+            filteredJobs = cachedJobs.filter { job in
+                guard let date = job.creationDate else {
+                    return false
+                }
+                return currentDate.timeIntervalSince(date) <= 604800 // 1 week = 604800 seconds
+            }
+        } else if filter == "In Last Month" {
+            filteredJobs = cachedJobs.filter { job in
+                guard let date = job.creationDate else {
+                    return false
+                }
+                return currentDate.timeIntervalSince(date) <= 2592000 // 1 month = 2592000 seconds
+            }
+        } else if filter == "Just Completed (<1 hour)" {
+            filteredJobs = cachedJobs.filter { job in
+                guard let date = job.creationDate else {
+                    return false
+                }
+                return currentDate.timeIntervalSince(date) <= 3600 // 1 hour = 3600 seconds
+            }
+        }
         // Status-based filters
         else {
             let statusMap = [
@@ -375,6 +396,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                         return currentDate.timeIntervalSince(date) <= 86400 // 1 day = 86400 seconds
                     }
                 } 
+                else if viewOption == "In Last Week" {
+                    filteredJobs = cachedJobs.filter { job in
+                        guard let date = job.creationDate else {
+                            return false
+                        }
+                        return currentDate.timeIntervalSince(date) <= 604800 // 1 week = 604800 seconds
+                    }
+                } else if viewOption == "In Last Month" {
+                    filteredJobs = cachedJobs.filter { job in
+                        guard let date = job.creationDate else {
+                            return false
+                        }
+                        return currentDate.timeIntervalSince(date) <= 2592000 // 1 month = 2592000 seconds
+                    }
+                }
                 // Status-based filters
                 else {
                     let statusMap = [
@@ -454,6 +490,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         // Update menu bar icon with running job count
         updateMenuBarIcon()
+
+        // Update any open job detail windows with fresh data
+        for job in jobs {
+            if let windowController = activeJobWindows[job.id] {
+                windowController.updateJob(job)
+            }
+        }
+
     }
     
     // Add a section of jobs to the menu

@@ -64,16 +64,23 @@ struct HFJobMetrics: Codable, Equatable {
     
     private func formatBitsPerSecond(_ bps: Int) -> String {
         let units = ["bps", "Kbps", "Mbps", "Gbps"]
+        
+        // Clamp to zero if negative
+        guard bps > 0 else {
+            return "0 bps"
+        }
+        
         var convertedValue = Double(bps)
         var unitIndex = 0
-        
+
         while convertedValue >= 1000 && unitIndex < units.count - 1 {
             convertedValue /= 1000
             unitIndex += 1
         }
-        
+
         return String(format: "%.2f %@", convertedValue, units[unitIndex])
     }
+
 }
 
 /// Structure to represent GPU metrics
@@ -276,7 +283,7 @@ class MetricsService: NSObject, URLSessionDataDelegate {
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            print("❌ Stream task completed with error: \(error)")
+            print("❌ [Metrics Service] Stream task completed with error: \(error)")
             
             if (error as NSError).domain == NSURLErrorDomain {
                 print("🔍 URL error code: \((error as NSError).code)")
