@@ -17,7 +17,7 @@ A small macOS menubar app to watch the status of your Hugging Face jobs.
 curl \
   -sOL https://github.com/drbh/hfjobs-menubar/releases/download/v0.0.2/HFJobs.zip && \
   unzip HFJobs.zip && \
-  open -a HFJobs.app
+  open -a $(pwd)/HFJobs.app
 ```
 
 ## Installation (build it yourself)
