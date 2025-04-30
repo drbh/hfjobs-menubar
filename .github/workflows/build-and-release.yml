@@ -52,8 +52,12 @@ jobs:
       - name: Package Application
         env:
           SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
-          make package notarize staple
+          make store-credentials package notarize staple
 
       - name: Create Release
         id: create_release
