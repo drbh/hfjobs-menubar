@@ -15,18 +15,26 @@ A small macOS menubar app to watch the status of your Hugging Face jobs.
 
 ```bash
 curl \
-  -sOL https://github.com/drbh/hfjobs-menubar/releases/download/v0.0.1/HFJobs.zip && \
+  -sOL https://github.com/drbh/hfjobs-menubar/releases/download/v0.0.2/HFJobs.zip && \
   unzip HFJobs.zip && \
   open -a HFJobs.app
-
-# NOTE: notifications require the application to be signed
-# please run `make sign` on the prebuilt binary to allow notifications
-# or build the application with the steps below to also enable
 ```
 
 ## Installation (build it yourself)
 
+### Setup Environment Variables
+
+Copy the example environment file and update with your values:
+
 ```bash
+cp .env.example .env
+# Edit .env with your signing and notarization details
+```
+
+### Build
+
+```bash
+source .env  # Load environment variables
 make
 ```
 
