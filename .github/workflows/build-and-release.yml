@@ -51,8 +51,7 @@ jobs:
 
       - name: Package Application
         env:
-          APP_NAME: ${{ secrets.APP_NAME }}
-          SIGN_IDENTITY: ${{ env.SIGN_IDENTITY }}
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY }}
         run: |
           make package
 
