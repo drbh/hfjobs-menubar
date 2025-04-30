@@ -50,6 +50,9 @@ jobs:
           echo "APP_VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
       - name: Package Application
+        env:
+          APP_NAME: ${{ secrets.APP_NAME }}
+          SIGN_IDENTITY: ${{ env.SIGN_IDENTITY }}
         run: |
           make package
 
