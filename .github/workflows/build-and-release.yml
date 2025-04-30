@@ -57,7 +57,7 @@ jobs:
           NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
-          make store-credentials package notarize staple
+          make store-credentials package notarize
 
       - name: Create Release
         id: create_release
