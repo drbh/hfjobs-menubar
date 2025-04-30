@@ -1,4 +1,22 @@
+# macOS
+.DS_Store
 .bak
+
+# Build artifacts
 _CodeSignature
 HFJobs.app/Contents/*
-build
+HFJobs.app/
+build/
+*.zip
+
+# Environment variables
+.env
+
+# Certificates and sensitive data
+*.p12
+*.cer
+*.pem
+*.key
+
+# User-specific files
+jobs.json

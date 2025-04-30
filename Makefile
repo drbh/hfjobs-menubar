@@ -1,11 +1,23 @@
-.PHONY: all build build-universal build-intel build-arm asset-catalog sign run clean
+.PHONY: all build build-universal build-intel build-arm asset-catalog sign run clean store-credentials notarize staple package
 
 # Default target that builds for current architecture
 all: build asset-catalog sign
 
+# Application configuration
+APP_NAME         := HFJobs
+BUNDLE_ID        := drbh.hfjobsmenubar
+
+# Use environment variables for sensitive data
+TEAM_ID          := $(TEAM_ID)
+SIGN_IDENTITY    := $(SIGN_IDENTITY)
+APPLE_ID         := $(APPLE_ID)
+NOTARY_PASSWORD  := $(NOTARY_PASSWORD)
+NOTARY_PROFILE   := $(NOTARY_PROFILE)
+
 # Define architectures
-ARCH_INTEL = x86_64
-ARCH_ARM = arm64
+ARCH_INTEL       := x86_64
+ARCH_ARM         := arm64
+ARCH             := $(shell uname -m)
 
 # Target-specific variables
 build-intel: ARCH = $(ARCH_INTEL)
@@ -104,10 +116,56 @@ asset-catalog:
 
 # Sign the application
 sign:
-	@echo "🔑 Signing application..."
-	@codesign --force --entitlements src/HFJobs.entitlements --sign "-" HFJobs.app
-	@echo "🔑 Signed HFJobs.app"
-	@echo "🚀 Run the app with 'open HFJobs.app'"
+	@if [ -z "$(SIGN_IDENTITY)" ]; then \
+		echo "❌ Error: SIGN_IDENTITY environment variable not set"; \
+		exit 1; \
+	fi
+	@echo "🔑 Signing application with Developer ID..."
+	@codesign --force \
+		--options runtime \
+		--timestamp \
+		--entitlements src/HFJobs.entitlements \
+		--sign $(SIGN_IDENTITY) \
+		$(APP_NAME).app
+	@echo "🔑 Signed $(APP_NAME).app as $(SIGN_IDENTITY)"
+
+# Packaging & Notarization
+package: sign
+	@echo "📦 Zipping for distribution..."
+	@ditto -c -k --sequesterRsrc --keepParent \
+		$(APP_NAME).app $(APP_NAME).zip
+	@echo "📦 Zipped to $(APP_NAME).zip"
+
+# Store your notarization credentials once
+store-credentials:
+	@if [ -z "$(APPLE_ID)" ] || [ -z "$(NOTARY_PASSWORD)" ] || [ -z "$(TEAM_ID)" ] || [ -z "$(NOTARY_PROFILE)" ]; then \
+		echo "❌ Error: One or more required environment variables not set (APPLE_ID, NOTARY_PASSWORD, TEAM_ID, NOTARY_PROFILE)"; \
+		exit 1; \
+	fi
+	@echo "🔐 Storing notarytool credentials profile '$(NOTARY_PROFILE)'…"
+	@xcrun notarytool store-credentials \
+	   --apple-id "$(APPLE_ID)" \
+	   --password "$(NOTARY_PASSWORD)" \
+	   --team-id "$(TEAM_ID)" \
+	   "$(NOTARY_PROFILE)"
+	@echo "✅ Credentials saved."
+
+# Notarize with notarytool
+notarize: package
+	@if [ -z "$(NOTARY_PROFILE)" ]; then \
+		echo "❌ Error: NOTARY_PROFILE environment variable not set"; \
+		exit 1; \
+	fi
+	@echo "☁️  Submitting $(APP_NAME).zip for notarization via notarytool…"
+	@xcrun notarytool submit $(APP_NAME).zip \
+	   --keychain-profile "$(NOTARY_PROFILE)" \
+	   --wait
+	@echo "☁️  Notarization complete."
+
+staple:
+	@echo "📎 Stapling notarization ticket..."
+	@xcrun stapler staple $(APP_NAME).zip
+	@echo "📎 Stapled. Ready to distribute."
 
 # Build and run
 run: build asset-catalog sign

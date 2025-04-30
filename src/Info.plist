@@ -4,26 +4,26 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>HFJobs</string>
     <key>CFBundleIdentifier</key>
-    <string>com.hfjobs.menubar</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
+    <string>drbh.hfjobsmenubar</string>
     <key>CFBundleName</key>
+    <string>Hugging Face Jobs Menubar</string>
+    <key>CFBundleDisplayName</key>
+    <string>Hugging Face Jobs Menubar</string>
+    <key>CFBundleExecutable</key>
     <string>HFJobs</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.0</string>
+    <string>1.0.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2025. All rights reserved.</string>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSUserNotificationAlertStyle</key>
