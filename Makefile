@@ -116,18 +116,19 @@ asset-catalog:
 
 # Sign the application
 sign:
-	@if [ -z "$(SIGN_IDENTITY)" ]; then \
-		echo "❌ Error: SIGN_IDENTITY environment variable not set"; \
-		exit 1; \
+	@if [ -n "$(SIGN_IDENTITY)" ]; then \
+		echo "🔑 Signing application with Developer ID..."; \
+		codesign --force \
+			--options runtime \
+			--timestamp \
+			--entitlements src/HFJobs.entitlements \
+			--sign $(SIGN_IDENTITY) \
+			$(APP_NAME).app; \
+		echo "🔑 Signed $(APP_NAME).app as $(SIGN_IDENTITY)"; \
+	else \
+		echo "ℹ️  SIGN_IDENTITY not set — skipping signing."; \
 	fi
-	@echo "🔑 Signing application with Developer ID..."
-	@codesign --force \
-		--options runtime \
-		--timestamp \
-		--entitlements src/HFJobs.entitlements \
-		--sign $(SIGN_IDENTITY) \
-		$(APP_NAME).app
-	@echo "🔑 Signed $(APP_NAME).app as $(SIGN_IDENTITY)"
+
 
 # Packaging & Notarization
 package: sign
