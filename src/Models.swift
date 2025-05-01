@@ -208,4 +208,14 @@ struct AppSettings {
     mutating func clearJobHistory() {
         jobHistory = [:]
     }
+
+    mutating func factoryReset() {
+        defaults.removeObject(forKey: tokenKey)
+        defaults.removeObject(forKey: usernameKey)
+        defaults.removeObject(forKey: pollingEnabledKey)
+        defaults.removeObject(forKey: pollingIntervalKey)
+        defaults.removeObject(forKey: jobHistoryKey)
+        defaults.removeObject(forKey: showTextInMenuKey)
+        defaults.removeObject(forKey: notificationsEnabledKey)
+    }
 }

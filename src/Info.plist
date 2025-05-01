@@ -17,9 +17,9 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.0.2</string>
+    <string>0.0.3</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>0</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
     <key>NSHumanReadableCopyright</key>
@@ -28,7 +28,12 @@
     <true/>
     <key>NSUserNotificationAlertStyle</key>
     <string>alert</string>
-    <key>NSUserNotificationsUsageDescription</key>
-    <string>HFJobs needs to send notifications about job status changes.</string>
+    <!-- Required for macOS 10.14 and later -->
+    <key>NSUserNotificationCenterDelegate</key>
+    <string>YES</string>
+    <!-- Description users see when asked for notification permission -->
+    <key>NSUserNotificationUsageDescription</key>
+    <string>We need to send notifications about your Hugging Face job status changes.</string>
+
 </dict>
 </plist>

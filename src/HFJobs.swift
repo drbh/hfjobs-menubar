@@ -10,6 +10,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var jobsSubmenu: NSMenu!
     private var pollingMenuItem: NSMenuItem!
     
+    private var credentialUsernameField: NSTextField?
+    private var credentialTokenField: NSSecureTextField?
+
     // Timers
     private var timer: Timer?
     private var pollingTimer: Timer?
@@ -23,6 +26,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Set up notification center delegate
         UNUserNotificationCenter.current().delegate = self
         
+
+        // Register standard edit commands
+        NSApp.mainMenu = createMenuBar()
+
         // Setup the app with token and username
         setupApp()
     }
@@ -43,14 +50,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     // Main app setup
     private func setupApp() {
-        // Check if token exists, if not prompt for it
-        if !checkAndPromptForToken() {
-            return // Don't proceed with app setup until token is provided
-        }
-        
-        // Check if username exists, if not prompt for it
-        if !checkAndPromptForUsername() {
-            return // Don't proceed with app setup until username is provided
+        // Check if both token and username exist, if not prompt for them
+        if !checkAndPromptForCredentials() {
+            return // Don't proceed with app setup until credentials are provided
         }
         
         // Create the status item in the menu bar
@@ -106,6 +108,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
+    func createMenuBar() -> NSMenu {
+        let mainMenu = NSMenu()
+        
+        // Edit menu with standard commands
+        let editMenu = NSMenu(title: "Edit")
+        let editMenuItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editMenuItem.submenu = editMenu
+        
+        // Add standard edit menu items
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        
+        mainMenu.addItem(editMenuItem)
+        return mainMenu
+    }
+
     // Create the main menu
     private func createMenu() {
         let menu = NSMenu()
@@ -160,15 +180,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         addMenuItem(to: menu, title: "Hugging Face", link: "https://huggingface.co/")
         addMenuItem(to: menu, title: "HF Spaces", link: "https://huggingface.co/spaces")
         
-        // Add refresh option
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Refresh Jobs", action: #selector(refreshJobs), keyEquivalent: "r"))
-        
         // Settings
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Update Token", action: #selector(promptForToken), keyEquivalent: "t"))
         menu.addItem(NSMenuItem(title: "Update Username", action: #selector(promptForUsername), keyEquivalent: "u"))
-        menu.addItem(NSMenuItem(title: "Clear Job History", action: #selector(clearJobHistory), keyEquivalent: ""))
-        
+
+
+        menu.addItem(NSMenuItem.separator())
         // Show/Hide Text in Menu Bar
         let showTextMenuItem = NSMenuItem(
             title: "Show Text in Menu Bar: \(AppSettings.shared.showTextInMenu ? "On" : "Off")", 
@@ -184,13 +202,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             keyEquivalent: "n"
         )
         menu.addItem(notificationsMenuItem)
+
+        menu.addItem(NSMenuItem(title: "Refresh Jobs", action: #selector(refreshJobs), keyEquivalent: "r"))
         
-        // Add version display (non-clickable)
+        // Clearing options
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Clear Job History", action: #selector(clearJobHistory), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Clear App Data", action: #selector(factoryReset), keyEquivalent: ""))
+        
+        // Non-clickable items
+        menu.addItem(NSMenuItem.separator())
+        
+        // Add the current username (non-clickable)
+        if let username = AppSettings.shared.username {
+            let usernameItem = NSMenuItem(title: "Username:  \(username)", action: nil, keyEquivalent: "")
+            usernameItem.isEnabled = false
+            menu.addItem(usernameItem)
+        }
+
+        // Add version display (non-clickable)
         let versionItem = NSMenuItem(title: "Version: \(AppVersion.current)", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
-        
+
         // Add quit option
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -759,6 +793,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
+    // Clear job history
+    @objc func factoryReset() {
+        let alert = NSAlert()
+        alert.messageText = "Factory Reset"
+        alert.informativeText = "Are you sure you want to clear all app data? This action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear All Data")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+
+        if response == .alertFirstButtonReturn {
+            // Clear all defaults
+            AppSettings.shared.factoryReset()
+            
+            NotificationService.shared.showNotification(
+                title: "App Data Cleared",
+                body: "All app data has been cleared. Please restart the app."
+            )
+        }
+    }
+    
     // MARK: - Polling Controls
     
     // Toggle real-time job polling
@@ -855,7 +911,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     // MARK: - Token and Username Management
     
-    // Check if token exists, if not prompt for it
+    // Check if both token and username exist, if not prompt for them
+    func checkAndPromptForCredentials() -> Bool {
+        // Check if either credential is missing
+        if AppSettings.shared.token == nil || AppSettings.shared.username == nil {
+            // Decide which field to focus initially based on what's missing
+            let initialMode: CredentialMode = AppSettings.shared.username == nil ? .username : .token
+            showCredentialsPanel(initialMode: initialMode)
+            return false
+        }
+        return true
+    }
+    
+    // For backward compatibility and individual calls
     func checkAndPromptForToken() -> Bool {
         if AppSettings.shared.token == nil {
             promptForToken()
@@ -864,7 +932,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return true
     }
     
-    // Check if username exists, if not prompt for it
+    // For backward compatibility and individual calls
     func checkAndPromptForUsername() -> Bool {
         if AppSettings.shared.username == nil {
             promptForUsername()
@@ -873,97 +941,246 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return true
     }
     
-    // Prompt for HF token
+    // Prompt for both HF token and username in a single panel
     @objc func promptForToken() {
-        let alert = NSAlert()
-        alert.messageText = "Hugging Face API Token"
-        alert.informativeText = "Please enter your Hugging Face API token"
-        alert.alertStyle = .informational
-        
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.placeholderString = "hf_..."
-        
-        // Pre-fill with existing token if available
-        if let existingToken = AppSettings.shared.token {
-            textField.stringValue = existingToken
-        }
-        
-        alert.accessoryView = textField
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        
-        let response = alert.runModal()
-        
-        if response == .alertFirstButtonReturn {
-            let token = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !token.isEmpty {
-                AppSettings.shared.token = token
-                
-                // If this is an update (app is already running), refresh jobs
-                if statusItem != nil {
-                    refreshJobs()
-                } else {
-                    // Initialize app if this was first setup
-                    applicationDidFinishLaunching(Notification(name: Notification.Name("TokenSetup")))
-                }
-            } else {
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Error"
-                errorAlert.informativeText = "Token cannot be empty"
-                errorAlert.alertStyle = .critical
-                errorAlert.runModal()
-                promptForToken() // Ask again
-            }
-        } else if statusItem == nil {
-            // If user cancels on first run, quit the app
-            NSApplication.shared.terminate(nil)
-        }
+        showCredentialsPanel(initialMode: .token)
     }
     
     // Prompt for HF username
     @objc func promptForUsername() {
-        let alert = NSAlert()
-        alert.messageText = "Hugging Face Username"
-        alert.informativeText = "Please enter your Hugging Face username"
-        alert.alertStyle = .informational
+        showCredentialsPanel(initialMode: .username)
+    }
+    
+    enum CredentialMode {
+        case token
+        case username
+    }
+    
+    // Combined credentials panel
+    private func showCredentialsPanel(initialMode: CredentialMode) {
+        let panelWidth: CGFloat = 550
+        let panelHeight: CGFloat = 200
         
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        textField.placeholderString = "username"
+        // Create a custom window class that handles keyboard shortcuts
+        class CredentialsWindow: NSPanel {
+            override func keyDown(with event: NSEvent) {
+                print("Key down event: \(event)")
+                
+                // Check for Command+C
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
+                    NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: self)
+                    return
+                }
+                
+                // Check for Command+V
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: self)
+                    return
+                }
+                
+                // Check for Command+X
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "x" {
+                    NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: self)
+                    return
+                }
+                
+                // Check for Command+A
+                if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "a" {
+                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: self)
+                    return
+                }
+                
+                super.keyDown(with: event)
+            }
+        }
+        
+        let panel = CredentialsWindow(
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Hugging Face Credentials"
+        panel.level = .floating
+        panel.isFloatingPanel = true
+        panel.center()
+        
+        let contentView = NSView(frame: panel.contentRect(forFrameRect: panel.frame))
+        contentView.wantsLayer = true
+        panel.contentView = contentView
+        
+        // Add title label
+        let titleLabel = NSTextField(labelWithString: "Configure Hugging Face Credentials")
+        titleLabel.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        titleLabel.frame = NSRect(x: 20, y: panelHeight - 40, width: panelWidth - 40, height: 20)
+        contentView.addSubview(titleLabel)
+        
+        // Username field
+        let usernameLabel = NSTextField(labelWithString: "Username:")
+        usernameLabel.frame = NSRect(x: 20, y: panelHeight - 80, width: 80, height: 20)
+        usernameLabel.alignment = .right
+        contentView.addSubview(usernameLabel)
+        
+        let usernameField = NSTextField(frame: NSRect(x: 110, y: panelHeight - 80, width: panelWidth - 130, height: 24))
+        usernameField.placeholderString = "username"
+        usernameField.bezelStyle = .roundedBezel
+        usernameField.focusRingType = .none
         
         // Pre-fill with existing username if available
         if let existingUsername = AppSettings.shared.username {
-            textField.stringValue = existingUsername
+            usernameField.stringValue = existingUsername
         }
         
-        alert.accessoryView = textField
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
+        contentView.addSubview(usernameField)
         
-        let response = alert.runModal()
+        // Token field
+        let tokenLabel = NSTextField(labelWithString: "API Token:")
+        tokenLabel.frame = NSRect(x: 20, y: panelHeight - 115, width: 80, height: 20)
+        tokenLabel.alignment = .right
+        contentView.addSubview(tokenLabel)
         
-        if response == .alertFirstButtonReturn {
-            let username = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !username.isEmpty {
-                AppSettings.shared.username = username
+        let tokenField = NSSecureTextField(frame: NSRect(x: 110, y: panelHeight - 115, width: panelWidth - 130, height: 24))
+        tokenField.placeholderString = "hf_..."
+        tokenField.bezelStyle = .roundedBezel
+        tokenField.focusRingType = .none
+        
+        // Pre-fill with existing token if available
+        if let existingToken = AppSettings.shared.token {
+            tokenField.stringValue = existingToken
+        }
+        
+        contentView.addSubview(tokenField)
+
+        
+        // Store direct references to the fields for later use
+        self.credentialUsernameField = usernameField
+        self.credentialTokenField = tokenField
+        
+        // Add info text
+        let infoText = NSTextField(wrappingLabelWithString: "Your token is stored locally and only used to access the Hugging Face API.")
+        infoText.frame = NSRect(x: 20, y: panelHeight - 155, width: panelWidth - 40, height: 30)
+        infoText.textColor = NSColor.secondaryLabelColor
+        infoText.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        contentView.addSubview(infoText)
+        
+        // Save button
+        let saveButton = NSButton(title: "Save", target: nil, action: nil)
+        saveButton.frame = NSRect(x: panelWidth - 80 - 20, y: 10, width: 80, height: 30)
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r" // Enter key
+        contentView.addSubview(saveButton)
+        
+        // Cancel button
+        let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+        cancelButton.frame = NSRect(x: panelWidth - 80 - 20 - 90, y: 10, width: 80, height: 30)
+        cancelButton.bezelStyle = .rounded
+        cancelButton.keyEquivalent = "\u{1b}" // Escape key
+        contentView.addSubview(cancelButton)
+        
+        // Setup button actions
+        saveButton.target = self
+        saveButton.action = #selector(saveCredentials(_:))
+        cancelButton.target = self
+        cancelButton.action = #selector(closeCredentialsPanel(_:))
+        
+        // Make sure first responder is set before showing window
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        
+        // Set first responder based on which field needs focus
+        if initialMode == .username {
+            panel.makeFirstResponder(usernameField)
+        } else {
+            panel.makeFirstResponder(tokenField)
+        }
+        
+        NSApp.runModal(for: panel)
+    }
+    
+    @objc func saveCredentials(_ sender: NSButton) {
+        // Find the text fields in the window
+        guard let window = sender.window,
+              let contentView = window.contentView,
+              let usernameField = self.credentialUsernameField,
+              let tokenField = self.credentialTokenField else {
+            return
+        }
+        
+        let username = usernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        var isValid = true
+        
+        // Validate username
+        if username.isEmpty {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "Error"
+            errorAlert.informativeText = "Username cannot be empty"
+            errorAlert.alertStyle = .critical
+            errorAlert.runModal()
+            isValid = false
+        }
+        
+        // Validate token
+        if token.isEmpty {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "Error"
+            errorAlert.informativeText = "Token cannot be empty"
+            errorAlert.alertStyle = .critical
+            errorAlert.runModal()
+            isValid = false
+        }
+        
+        if isValid {
+            // Save the old username to check if it changed
+            let oldUsername = AppSettings.shared.username
+            
+            // Save values
+            AppSettings.shared.username = username
+            AppSettings.shared.token = token
+            
+            print("Saved credentials: \(username), \(token)")
+            
+            // Notify user
+            let usernameChanged = (oldUsername != username && oldUsername != nil)
+            NotificationService.shared.showNotification(
+                title: "Credentials Saved",
+                body: usernameChanged ? 
+                    "Your Hugging Face credentials have been updated. Username changed from \(oldUsername ?? "none") to \(username)." :
+                    "Your Hugging Face credentials have been saved successfully."
+            )
+            
+            // Close the panel
+            NSApp.stopModal()
+            window.close()
+            
+            // If this is an update (app is already running), completely refresh the app
+            if statusItem != nil {
+                // Clear cached jobs since they're for the old user
+                cachedJobs = []
                 
-                // If this is an update (app is already running), refresh jobs
-                if statusItem != nil {
-                    refreshJobs()
-                } else {
-                    // Initialize app if this was first setup
-                    applicationDidFinishLaunching(Notification(name: Notification.Name("UsernameSetup")))
-                }
+                // Rebuild UI
+                setupMenuBar()
+                createMenu()
+                
+                // Refresh jobs to show the new user's jobs
+                refreshJobs()
             } else {
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Error"
-                errorAlert.informativeText = "Username cannot be empty"
-                errorAlert.alertStyle = .critical
-                errorAlert.runModal()
-                promptForUsername() // Ask again
+                // Initialize app if this was first setup
+                applicationDidFinishLaunching(Notification(name: Notification.Name("CredentialsSetup")))
             }
-        } else if statusItem == nil {
-            // If user cancels on first run, quit the app
-            NSApplication.shared.terminate(nil)
+        }
+    }
+    
+    @objc func closeCredentialsPanel(_ sender: NSButton) {
+        if let window = sender.window {
+            NSApp.stopModal()
+            window.close()
+            
+            // If this is the first setup and user cancels, quit the app
+            if statusItem == nil {
+                NSApplication.shared.terminate(nil)
+            }
         }
     }
     
