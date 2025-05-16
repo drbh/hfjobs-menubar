@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/707fdc47-c6e4-4d62-8ede-8e4e4b20609e" width="200" height="200" alt="hfjobs-menubar logo">
+  <img src="https://github.com/user-attachments/assets/8c815b1c-e0c7-42c5-89ef-87551ece4b2e" width="200" height="200" alt="hfjobs-menubar logo">
   <p align="center">
       <a href="https://github.com/drbh/hfjobs-menubar/actions/workflows/build-and-release.yml"><img alt="Build and Release" src="https://img.shields.io/github/actions/workflow/status/drbh/hfjobs-menubar/build-and-release.yml?label=CI%20Release"></a>
       <a href="https://github.com/drbh/hfjobs-menubar/tags"><img alt="GitHub tag" src="https://img.shields.io/github/v/tag/drbh/hfjobs-menubar"></a>
