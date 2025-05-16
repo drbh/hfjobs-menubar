@@ -459,7 +459,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     
                     filteredJobs = cachedJobs.filter { $0.status.stage == status }
                 }
-                
+
                 updateJobsUI(jobs: filteredJobs, showFilterMessage: true, filterStatus: viewOption)
             }
         }
@@ -470,6 +470,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Clear the submenu
         jobsSubmenu.removeAllItems()
         
+        var sortedJobs = jobs.sorted { job1, job2 in
+            guard let date1 = ISO8601DateFormatter().date(from: job1.metadata.createdAt),
+                let date2 = ISO8601DateFormatter().date(from: job2.metadata.createdAt) else {
+                return job1.metadata.createdAt > job2.metadata.createdAt
+            }
+            return date1 > date2 // Sort in descending order (newest first)
+        }
+
         // Show filter message if needed
         if showFilterMessage && filterStatus != "All" {
             let filterItem = NSMenuItem(title: "Showing \(filterStatus) Jobs", action: nil, keyEquivalent: "")
@@ -478,17 +486,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             jobsSubmenu.addItem(NSMenuItem.separator())
         }
         
-        if jobs.isEmpty {
+        if sortedJobs.isEmpty {
             jobsSubmenu.addItem(NSMenuItem(title: "No jobs found", action: nil, keyEquivalent: ""))
             updateMenuBarIcon() // Update menu bar even if no jobs
             return
         }
         
         // Group jobs by state
-        let runningJobs = jobs.filter { $0.status.stage == "RUNNING" }
-        let completedJobs = jobs.filter { $0.status.stage == "COMPLETED" }
-        let errorJobs = jobs.filter { $0.status.stage == "ERROR" }
-        let otherJobs = jobs.filter { !["RUNNING", "COMPLETED", "ERROR"].contains($0.status.stage) }
+        let runningJobs = sortedJobs.filter { $0.status.stage == "RUNNING" }
+        let completedJobs = sortedJobs.filter { $0.status.stage == "COMPLETED" }
+        let errorJobs = sortedJobs.filter { $0.status.stage == "ERROR" }
+        let otherJobs = sortedJobs.filter { !["RUNNING", "COMPLETED", "ERROR"].contains($0.status.stage) }
         
         // Add sections for each state
         addJobsSection(title: "Running Jobs", jobs: runningJobs, to: jobsSubmenu)
@@ -509,7 +517,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         addJobsSection(title: "Other Jobs", jobs: otherJobs, to: jobsSubmenu)
         
         // Update any open job detail windows with fresh data
-        for job in jobs {
+        for job in sortedJobs {
             if let windowController = activeJobWindows[job.id] {
                 // TODO: handle state changes without clearing logs
                 
@@ -526,7 +534,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         updateMenuBarIcon()
 
         // Update any open job detail windows with fresh data
-        for job in jobs {
+        for job in sortedJobs {
             if let windowController = activeJobWindows[job.id] {
                 windowController.updateJob(job)
             }
@@ -706,7 +714,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Check for new jobs
         for (jobId, newJob) in newJobsDict {
             if oldJobsDict[jobId] == nil {
-                print("New job detected: \(jobId) with status \(newJob.status.stage)")
                 NotificationService.shared.notifyNewJob(newJob)
             }
         }

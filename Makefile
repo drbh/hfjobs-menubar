@@ -182,3 +182,13 @@ run-universal: build-universal asset-catalog sign
 clean:
 	rm -rf HFJobs.app build/
 	@echo "🧹 Cleaned build artifacts"
+
+# Create image set
+create-image-set:
+	@echo "🖼️ Creating image set..."
+	@mkdir -p src/Assets.xcassets/AppIcon.appiconset
+	@cp src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon_original.png src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png
+	@echo "🖼️ Created image set"
+	@sips -z 16 16 src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png --out src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png
+	@sips -z 32 32 src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon_original.png --out src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png
+	@sips -z 48 48 src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon_original.png --out src/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@3x.png

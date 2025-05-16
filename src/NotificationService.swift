@@ -61,7 +61,6 @@ class NotificationService {
         
         // Check if notifications are authorized by the system
         if !notificationsAuthorized {
-            print("Notifications not authorized by system, rechecking permissions")
             checkPermissions()
             return
         }
