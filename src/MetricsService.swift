@@ -204,7 +204,7 @@ class MetricsService: NSObject, URLSessionDataDelegate {
     private func startMetricsStream(username: String, jobId: String) {
         print("📡 Creating metrics stream request...")
         
-        guard let url = URL(string: "https://huggingface.co/api/jobs/\(username)/\(jobId)/metrics-stream") else {
+        guard let url = URL(string: "https://huggingface.co/api/jobs/\(username)/\(jobId)/metrics") else {
             print("❌ Invalid URL")
             currentDelegate?.didEncounterError(JobServiceError.invalidURL)
             isStreamingActive = false
@@ -220,6 +220,10 @@ class MetricsService: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(AppSettings.shared.token ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("hfjobs-swift", forHTTPHeaderField: "X-Library-Name")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        
+        print("🌐 Making metrics request to: \(url)")
         
 
         // Cancel any existing task

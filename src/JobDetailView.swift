@@ -140,6 +140,7 @@ class JobDetailWindowController: NSWindowController {
                 if logObservable.currentLogs == nil {
                     fetchJobLogs()
                 }
+                
             }
         }
     }
@@ -236,7 +237,6 @@ class JobDetailWindowController: NSWindowController {
     private func fetchJobData() {
         print("🔄 Fetching job data")
         
-        
         fetchJobLogs()
         
         if jobObservable.job.status.stage != "COMPLETED" && jobObservable.job.status.stage != "ERROR" {
@@ -249,10 +249,38 @@ class JobDetailWindowController: NSWindowController {
         
         logObservable.reset()
         
-        // Get the job ID
+        // Get the job ID and status
         let jobId = jobObservable.job.id
+        let jobStatus = jobObservable.job.status.stage
         
-        // Start streaming logs
+        print("📊 Job status: \(jobStatus)")
+        
+        // For completed jobs, try to fetch logs non-streaming first
+        if jobStatus == "COMPLETED" || jobStatus == "ERROR" {
+            print("📋 Job is completed/error - trying to fetch complete logs first")
+            Task {
+                do {
+                    let logs = try await LogsStreamService.shared.fetchLogs(jobId: jobId)
+                    print("✅ Fetched \(logs.logEntries.count) log entries for completed job")
+                    
+                    // Update the observable with the fetched logs
+                    DispatchQueue.main.async { [weak self] in
+                        self?.logObservable.update(logs: logs)
+                    }
+                } catch {
+                    print("❌ Failed to fetch completed job logs, falling back to streaming: \(error)")
+                    // Fall back to streaming if non-streaming fails
+                    self.startLogsStreaming(jobId: jobId)
+                }
+            }
+        } else {
+            // For running jobs, use streaming
+            print("🏃 Job is running - using streaming logs")
+            startLogsStreaming(jobId: jobId)
+        }
+    }
+    
+    private func startLogsStreaming(jobId: String) {
         _ = LogsStreamService.shared.streamJobLogs(
             jobId: jobId,
             includeTimestamps: true,
@@ -271,6 +299,7 @@ class JobDetailWindowController: NSWindowController {
             delegate: JobMetricsStreamHandler(metricsObservable: metricsObservable)
         )
     }
+    
 }
 
 // Make JobDetailWindowController conform to NSWindowDelegate
@@ -360,6 +389,7 @@ struct JobDetailView: View {
                     .padding(.horizontal)
                 
                 logsSection
+                
                 
                 Spacer()
             }
@@ -516,6 +546,9 @@ struct JobDetailView: View {
         }
     }
     
+    // MARK: - Events removed (focusing on logs and metrics only)
+    
+    
     private func logsErrorContent(_ errorMessage: String) -> some View {
         VStack(spacing: 8) {
             Text("Logs Error: \(errorMessage)")
@@ -616,7 +649,7 @@ struct JobDetailView: View {
                         .font(.headline)
                         .lineLimit(1)
                     
-                    if let spaceId = job.spec.spaceId, !spaceId.isEmpty {
+                    if let spaceId = job.spaceId, !spaceId.isEmpty {
                         Button {
                             if let spaceURL = job.spaceURL {
                                 NSWorkspace.shared.open(spaceURL)
@@ -681,14 +714,19 @@ struct JobDetailView: View {
             ], alignment: .leading, spacing: 8) {
                 // Row 1: ID, Owner, Hardware
                 detailItem(label: "ID", value: job.id.prefix(10) + "...")
-                detailItem(label: "Owner", value: job.metadata.owner.name)
-                detailItem(label: "Hardware", value: job.spec.flavor)
+                detailItem(label: "Owner", value: job.owner.name)
+                detailItem(label: "Hardware", value: job.flavor)
                 
                 // Row 2: Created, Docker Image/Command
                 if let date = job.creationDate {
                     detailItem(label: "Created", value: date.formatted(date: .abbreviated, time: .shortened))
                 } else {
-                    detailItem(label: "Created", value: job.metadata.createdAt)
+                    detailItem(label: "Created", value: job.createdAt)
+                }
+                
+                // Row 3: Timeout (if available)
+                if let timeoutSeconds = job.timeoutSeconds {
+                    detailItem(label: "Timeout", value: "\(timeoutSeconds)s")
                 }
                 
                 // Command (spans 2 columns)
@@ -696,7 +734,7 @@ struct JobDetailView: View {
                     Text("Command")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Text(job.spec.command.joined(separator: " "))
+                    Text(job.command.joined(separator: " "))
                         .font(.caption)
                         .monospaced()
                         .lineLimit(1)
@@ -750,6 +788,13 @@ struct JobDetailView: View {
                 networkMetricsCard(metrics: metrics)
                     .padding(.horizontal)
                     .padding(.top, 4)
+                    
+                // Environment variables card if available
+                if let env = job.environment, !env.isEmpty {
+                    environmentVariablesCard(env: env)
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+                }
                 
                 // GPU cards if available
                 if !metrics.gpus.isEmpty {
@@ -858,6 +903,19 @@ struct JobDetailView: View {
         .background(Color(.textBackgroundColor).opacity(0.4))
         .cornerRadius(8)
     }
+    
+    // Helper function to determine temperature color
+    private func temperatureColor(_ temp: Double) -> Color {
+        if temp > 85 {
+            return .red
+        } else if temp > 75 {
+            return .orange
+        } else if temp > 65 {
+            return .yellow
+        } else {
+            return .green
+        }
+    }
 
     // Network metrics card
     private func networkMetricsCard(metrics: HFJobMetrics) -> some View {
@@ -956,8 +1014,8 @@ struct JobDetailView: View {
             
             // GPU memory with percentage and size
             if let memUtil = gpu.memoryUtilization, 
-            let memUsed = gpu.memoryUsedBytes, 
-            let memTotal = gpu.memoryTotalBytes {
+            let _ = gpu.memoryUsedBytes, 
+            let _ = gpu.memoryTotalBytes {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("GPU Memory")
@@ -1014,17 +1072,33 @@ struct JobDetailView: View {
         .cornerRadius(8)
     }
 
-    // Helper function to determine temperature color
-    private func temperatureColor(_ temp: Double) -> Color {
-        if temp > 85 {
-            return .red
-        } else if temp > 75 {
-            return .orange
-        } else if temp > 65 {
-            return .yellow
-        } else {
-            return .green
+    // Environment variables card
+    private func environmentVariablesCard(env: [String: String]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Environment Variables")
+                .font(.headline)
+                .padding(.bottom, 2)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(env.keys.sorted(), id: \.self) { key in
+                    if let value = env[key] {
+                        HStack(alignment: .top) {
+                            Text(key)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .frame(width: 120, alignment: .leading)
+                            
+                            Text(value)
+                                .font(.caption)
+                                .monospaced()
+                        }
+                    }
+                }
+            }
         }
+        .padding()
+        .background(Color(.textBackgroundColor).opacity(0.4))
+        .cornerRadius(8)
     }
 }
 

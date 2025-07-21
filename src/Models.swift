@@ -17,35 +17,34 @@ struct HFJob: Codable, Equatable, Identifiable {
         let name: String
     }
     
-    struct Metadata: Codable, Equatable {
-        let jobId: String
-        let owner: Owner
-        let createdAt: String
-    }
-        
-    struct Spec: Codable, Equatable {
-        let spaceId: String?     
-        let command: [String]
-        let flavor: String
-        let dockerImage: String?
-    }
-    
     struct Status: Codable, Equatable {
         var stage: String
         let message: String?
     }
     
-    let metadata: Metadata
-    let spec: Spec
-    var status: Status
+    struct SecretValue: Codable, Equatable {
+        var encrypted: String
+        let keyId: String?
+    }
     
-    var id: String { metadata.jobId }
+    let id: String
+    let owner: Owner
+    let createdAt: String
+    let spaceId: String?
+    let dockerImage: String?
+    let environment: [String: String]?
+    let secrets: [String: SecretValue]?
+    let arguments: [String]?
+    let command: [String]
+    let flavor: String
+    let timeoutSeconds: Int?
+    var status: Status
     
     // Helper computed properties
     var displayName: String {
-        if let spaceId = spec.spaceId, !spaceId.isEmpty {
+        if let spaceId = spaceId, !spaceId.isEmpty {
             return spaceId
-        } else if let dockerImage = spec.dockerImage, !dockerImage.isEmpty {
+        } else if let dockerImage = dockerImage, !dockerImage.isEmpty {
             // Extract meaningful part from docker image name if possible
             let components = dockerImage.split(separator: "/")
             if let lastComponent = components.last {
@@ -54,9 +53,9 @@ struct HFJob: Codable, Equatable, Identifiable {
             return dockerImage
         } else {
             // Use the first part of the command as an identifier
-            let command = spec.command.first ?? ""
-            if !command.isEmpty {
-                return "Command: \(command)"
+            let commandStr = command.first ?? ""
+            if !commandStr.isEmpty {
+                return "Command: \(commandStr)"
             }
             // Fallback to job ID if nothing else is available
             return "Job \(id.prefix(8))"
@@ -92,7 +91,7 @@ struct HFJob: Codable, Equatable, Identifiable {
         dateFormatter.locale = Locale(identifier: "en_US_POSIX")
         dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
         
-        guard let date = dateFormatter.date(from: metadata.createdAt) else {
+        guard let date = dateFormatter.date(from: createdAt) else {
             return "Unknown time"
         }
         
@@ -108,16 +107,16 @@ struct HFJob: Codable, Equatable, Identifiable {
         dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"
         dateFormatter.locale = Locale(identifier: "en_US_POSIX")
         dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return dateFormatter.date(from: metadata.createdAt)
+        return dateFormatter.date(from: createdAt)
     }
     
     var formattedCommand: String {
-        let commandString = spec.command.joined(separator: " ")
+        let commandString = command.joined(separator: " ")
         return commandString.count > 30 ? "\(commandString.prefix(30))..." : commandString
     }
     
     var spaceURL: URL? {
-        guard let spaceId = spec.spaceId else { return nil }
+        guard let spaceId = spaceId else { return nil }
         return URL(string: "https://huggingface.co/spaces/\(spaceId)")
     }
 }

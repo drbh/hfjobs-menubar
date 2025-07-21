@@ -5,6 +5,7 @@ import UserNotifications
 class NotificationService {
     static let shared = NotificationService()
     private var notificationsAuthorized = false
+    private var hasRequestedPermissions = false
     
     private init() {
         checkPermissions()
@@ -34,6 +35,13 @@ class NotificationService {
     
     // Request notification permissions
     func requestPermissions() {
+        // Only request once per app session
+        if hasRequestedPermissions {
+            return
+        }
+        
+        hasRequestedPermissions = true
+        
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             DispatchQueue.main.async {
                 if granted {
@@ -61,7 +69,6 @@ class NotificationService {
         
         // Check if notifications are authorized by the system
         if !notificationsAuthorized {
-            checkPermissions()
             return
         }
         
@@ -78,12 +85,11 @@ class NotificationService {
             if let error = error {
                 print("Error showing notification: \(error)")
                 
-                // If we get an authorization error, update our state and try re-requesting permissions
+                // If we get an authorization error, update our state but don't re-request
                 if error.localizedDescription.contains("denied") || 
                    error.localizedDescription.contains("not authorized") {
                     DispatchQueue.main.async {
                         self.notificationsAuthorized = false
-                        self.requestPermissions()
                     }
                 }
             }

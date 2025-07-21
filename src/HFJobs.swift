@@ -268,7 +268,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     // Poll job status with async/await
     @objc private func pollJobStatus() {
-        print("Polling for job status changes...")
+        // Reduced logging verbosity - only log when jobs change
+        // print("Polling for job status changes...")
         
         Task {
             do {
@@ -470,10 +471,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Clear the submenu
         jobsSubmenu.removeAllItems()
         
-        var sortedJobs = jobs.sorted { job1, job2 in
-            guard let date1 = ISO8601DateFormatter().date(from: job1.metadata.createdAt),
-                let date2 = ISO8601DateFormatter().date(from: job2.metadata.createdAt) else {
-                return job1.metadata.createdAt > job2.metadata.createdAt
+        let sortedJobs = jobs.sorted { job1, job2 in
+            guard let date1 = ISO8601DateFormatter().date(from: job1.createdAt),
+                let date2 = ISO8601DateFormatter().date(from: job2.createdAt) else {
+                return job1.createdAt > job2.createdAt
             }
             return date1 > date2 // Sort in descending order (newest first)
         }
@@ -518,7 +519,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         // Update any open job detail windows with fresh data
         for job in sortedJobs {
-            if let windowController = activeJobWindows[job.id] {
+            if activeJobWindows[job.id] != nil {
                 // TODO: handle state changes without clearing logs
                 
                 // windowController.updateJob(job)
@@ -580,17 +581,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         jobSubmenu.addItem(NSMenuItem.separator())
         
         // Add detailed info items
-        jobSubmenu.addItem(makeInfoMenuItem("Job ID: \(job.metadata.jobId)"))
-        if let spaceId = job.spec.spaceId {
+        jobSubmenu.addItem(makeInfoMenuItem("Job ID: \(job.id)"))
+        if let spaceId = job.spaceId {
             jobSubmenu.addItem(makeInfoMenuItem("Space: \(spaceId)"))
         } else {
             jobSubmenu.addItem(makeInfoMenuItem("Space: N/A"))
         }
-        jobSubmenu.addItem(makeInfoMenuItem("Docker Image: \(job.spec.dockerImage ?? "N/A")"))
+        jobSubmenu.addItem(makeInfoMenuItem("Docker Image: \(job.dockerImage ?? "N/A")"))
         jobSubmenu.addItem(makeInfoMenuItem("Status: \(job.status.stage)"))
-        jobSubmenu.addItem(makeInfoMenuItem("Created: \(job.metadata.createdAt)"))
-        jobSubmenu.addItem(makeInfoMenuItem("Owner: \(job.metadata.owner.name)"))
-        jobSubmenu.addItem(makeInfoMenuItem("Flavor: \(job.spec.flavor)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Created: \(job.createdAt)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Owner: \(job.owner.name)"))
+        jobSubmenu.addItem(makeInfoMenuItem("Flavor: \(job.flavor)"))
         
         if let message = job.status.message, !message.isEmpty {
             jobSubmenu.addItem(makeInfoMenuItem("Message: \(message)"))
@@ -599,7 +600,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Add command with full details
         jobSubmenu.addItem(NSMenuItem.separator())
         jobSubmenu.addItem(makeInfoMenuItem("Command:"))
-        let commandString = job.spec.command.joined(separator: " ")
+        let commandString = job.command.joined(separator: " ")
         jobSubmenu.addItem(makeInfoMenuItem("  \(commandString)"))
         
         // Add actions
@@ -607,7 +608,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         // Copy Job ID action
         let copyJobIdItem = NSMenuItem(title: "Copy Job ID", action: #selector(copyText(_:)), keyEquivalent: "")
-        copyJobIdItem.representedObject = job.metadata.jobId
+        copyJobIdItem.representedObject = job.id
         jobSubmenu.addItem(copyJobIdItem)
         
         // TODO: revisit when cancel job action is available
@@ -619,7 +620,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // }
         
         // Open in browser action (if spaceId is available)
-        if let spaceId = job.spec.spaceId {
+        if let spaceId = job.spaceId {
             let spaceUrl = "https://huggingface.co/spaces/\(spaceId)"
             let openInBrowserItem = NSMenuItem(title: "Open Space in Browser", action: #selector(openLink(_:)), keyEquivalent: "")
             openInBrowserItem.representedObject = spaceUrl
@@ -672,7 +673,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     // Detect changes in job status and show notifications
     private func detectStatusChanges(oldJobs: [HFJob], newJobs: [HFJob]) {
-        print("Checking for status changes between \(oldJobs.count) old jobs and \(newJobs.count) new jobs")
+        // Only log if there are actual changes
+        if oldJobs.count != newJobs.count {
+            print("Job count changed: \(oldJobs.count) → \(newJobs.count)")
+        }
         
         // Create dictionaries for quick lookup
         let oldJobsDict = Dictionary(uniqueKeysWithValues: oldJobs.map { ($0.id, $0) })
@@ -1107,7 +1111,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     @objc func saveCredentials(_ sender: NSButton) {
         // Find the text fields in the window
         guard let window = sender.window,
-              let contentView = window.contentView,
               let usernameField = self.credentialUsernameField,
               let tokenField = self.credentialTokenField else {
             return

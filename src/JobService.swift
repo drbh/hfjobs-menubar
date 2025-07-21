@@ -17,7 +17,7 @@ enum JobServiceError: Error {
 
 // Structure to decode log entries from streaming response
 struct JobLogEntry: Decodable {
-    let timestamp: String
+    let timestamp: String?
     let data: String
 }
 
@@ -55,8 +55,9 @@ class JobService {
             guard httpResponse.statusCode == 200 else {
                 throw JobServiceError.httpError(httpResponse.statusCode)
             }
-            
+
             let jobs = try JSONDecoder().decode([HFJob].self, from: data)
+            
             return jobs
         } catch let error as JobServiceError {
             throw error
@@ -111,7 +112,6 @@ class JobService {
         }
     }
     
-    // TODO: Implement job cancellation on the server side?
     // Cancel a running job
     func cancelJob(jobId: String) async throws {
         guard let token = AppSettings.shared.token, !token.isEmpty else {

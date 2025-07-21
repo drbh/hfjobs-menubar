@@ -36,6 +36,24 @@ struct LogsSummaryView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
+                Button("Copy All") {
+                    let allLogsText = filteredLogs.map { entry in
+                        showTimestamps && !entry.timestamp.isEmpty ? 
+                            "[\(entry.timestamp)] \(entry.message)" : 
+                            entry.message
+                    }.joined(separator: "\n")
+                    
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(allLogsText, forType: .string)
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.blue.opacity(0.1))
+                .cornerRadius(4)
+                
                 Toggle("Auto-scroll", isOn: $autoScroll)
                     .toggleStyle(.switch)
                     .font(.caption)
@@ -290,6 +308,7 @@ struct LogEntryRow: View {
                 Text("[\(entry.timestamp)]")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundColor(.secondary)
+                    .textSelection(.enabled)
             }
             
             if let icon = logStyle.icon {
@@ -305,6 +324,24 @@ struct LogEntryRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .contextMenu {
+                    Button("Copy Log Entry") {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(entry.message, forType: .string)
+                    }
+                    .keyboardShortcut("c", modifiers: .command)
+                    
+                    if showTimestamp && !entry.timestamp.isEmpty {
+                        Button("Copy with Timestamp") {
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            pasteboard.setString("[\(entry.timestamp)] \(entry.message)", forType: .string)
+                        }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                    }
+                }
         }
         .padding(.vertical, 0)
     }

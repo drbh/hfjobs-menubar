@@ -78,8 +78,13 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                 let _ = try await JobService.shared.fetchJobById(jobId: jobId)
                 self.startLogStream(username: username, jobId: jobId)
             } catch {
-                print("❌ Error verifying job: \(error)")
-                delegate.didEncounterError(error)
+                if let jobError = error as? JobServiceError, case .jobNotFound = jobError {
+                    print("ℹ️ Job not found - likely completed or deleted")
+                    delegate.didCompleteStream()
+                } else {
+                    print("❌ Error verifying job: \(error)")
+                    delegate.didEncounterError(error)
+                }
                 self.isStreamingActive = false
             }
         }
@@ -90,7 +95,7 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
     private func startLogStream(username: String, jobId: String) {
         print("📡 Creating logs stream request...")
         
-        guard let url = URL(string: "https://huggingface.co/api/jobs/\(username)/\(jobId)/logs-stream") else {
+        guard let url = URL(string: "https://huggingface.co/api/jobs/\(username)/\(jobId)/logs") else {
             print("❌ Invalid URL")
             currentDelegate?.didEncounterError(JobServiceError.invalidURL)
             isStreamingActive = false
@@ -106,6 +111,12 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(AppSettings.shared.token ?? "")", forHTTPHeaderField: "Authorization")
         request.setValue("hfjobs-swift", forHTTPHeaderField: "X-Library-Name")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        
+        print("🌐 Making logs request to: \(url)")
+        print("🔑 Authorization header: Bearer \(String((AppSettings.shared.token ?? "").prefix(4)))...")
+        print("📋 Accept header: text/event-stream")
 
         // Cancel any existing task
         logStreamTask?.cancel()
@@ -156,17 +167,25 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
         
         // Print raw data as string for debugging (limited characters)
         if let rawString = String(data: data, encoding: .utf8) {
-            let preview = String(rawString.prefix(100))
-            print("📝 Log data preview: \(preview)...")
+            print("📝 Raw log data: '\(rawString)'")
         }
         
         // Add to buffer and process
         buffer.append(data)
+        print("📊 Buffer size after append: \(buffer.count) bytes")
         processBuffer()
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
+            // Handle cancellation silently (expected when stopping streams)
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                print("🛑 Logs stream cancelled")
+                currentDelegate?.didCompleteStream()
+                isStreamingActive = false
+                return
+            }
+            
             print("❌ [Log Service] Stream task completed with error: \(error)")
             
             if (error as NSError).domain == NSURLErrorDomain {
@@ -195,8 +214,13 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                         isStreamingActive = false
                     }
                 } catch {
-                    print("❌ Error checking job status: \(error)")
-                    currentDelegate?.didEncounterError(error)
+                    if let jobError = error as? JobServiceError, case .jobNotFound = jobError {
+                        print("🏁 Job no longer exists - stream completed")
+                        currentDelegate?.didCompleteStream()
+                    } else {
+                        print("❌ Error checking job status: \(error)")
+                        currentDelegate?.didEncounterError(error)
+                    }
                     isStreamingActive = false
                 }
             }
@@ -208,6 +232,8 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
     }
     
     private func processBuffer() {
+        print("🔄 Processing buffer with \(buffer.count) bytes")
+        
         // Look for complete lines in the buffer (terminated by \n)
         var logEntries: [(String, Date?)] = []
         
@@ -217,8 +243,11 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
             
             // Convert line data to string
             if let line = String(data: lineData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                print("📄 Processing line: '\(line)'")
+                
                 // Handle "event: log" line
                 if line == "event: log" {
+                    print("📌 Found event: log")
                     continue
                 }
                 
@@ -226,6 +255,7 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                 if line.hasPrefix("data: ") {
                     let jsonStart = line.index(line.startIndex, offsetBy: "data: ".count)
                     let jsonString = String(line[jsonStart...])
+                    print("🔍 Processing JSON: \(jsonString)")
                     
                     logsStarted = true
                     
@@ -234,16 +264,21 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                         do {
                             let decoder = JSONDecoder()
                             let logEntry = try decoder.decode(JobLogEntry.self, from: jsonData)
+                            print("✅ Decoded log entry - timestamp: \(logEntry.timestamp ?? "nil"), data: \(logEntry.data)")
                             
                             // Skip "Job started" messages as per original implementation
                             if !logEntry.data.hasPrefix("===== Job started") {
                                 let timestamp: Date? = includeTimestamps ? {
+                                    guard let timestampString = logEntry.timestamp else { return nil }
                                     let dateFormatter = ISO8601DateFormatter()
-                                    return dateFormatter.date(from: logEntry.timestamp)
+                                    return dateFormatter.date(from: timestampString)
                                 }() : nil
                                 
                                 // Add to batch instead of notifying immediately
                                 logEntries.append((logEntry.data, timestamp))
+                                print("📝 Added log entry to batch: \(logEntry.data)")
+                            } else {
+                                print("⏭️ Skipped 'Job started' message")
                             }
                         } catch {
                             os_log("❌ Error decoding log entry: %@", error.localizedDescription)
@@ -260,13 +295,17 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
         
         // If we collected any log entries, notify delegate with the batch
         if !logEntries.isEmpty {
+            print("🚀 Sending \(logEntries.count) log entries to delegate")
             DispatchQueue.main.async { [weak self] in
                 // Split into lines and timestamps
                 let lines = logEntries.map { $0.0 }
                 let timestamps = logEntries.map { $0.1 }
                 
+                print("📤 Calling delegate with lines: \(lines)")
                 self?.currentDelegate?.didReceiveLogLines(lines, timestamps: timestamps)
             }
+        } else {
+            print("⭕ No log entries to send")
         }
     }
 
@@ -305,6 +344,8 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
                 throw JobServiceError.unknown
             }
             
+            print("📡 Non-streaming logs response code: \(httpResponse.statusCode)")
+            
             guard httpResponse.statusCode == 200 else {
                 throw JobServiceError.httpError(httpResponse.statusCode)
             }
@@ -312,6 +353,8 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
             guard let responseString = String(data: data, encoding: .utf8) else {
                 throw JobServiceError.unknown
             }
+            
+            print("📝 Non-streaming raw logs data (\(data.count) bytes): '\(responseString.prefix(500))...'")
             
             // Parse log entries
             let logEntries = parseLogEntries(from: responseString)
@@ -333,14 +376,41 @@ class LogsStreamService: NSObject, URLSessionDataDelegate {
         for line in lines {
             if line.isEmpty { continue }
             
-            let components = line.components(separatedBy: " ")
-            if components.count >= 2 {
-                let timestamp = components[0]
-                let message = components.dropFirst().joined(separator: " ")
-                logEntries.append(LogEntry(timestamp: timestamp, message: message))
+            // Check if this is SSE format data
+            if line.hasPrefix("data: ") {
+                let jsonStart = line.index(line.startIndex, offsetBy: "data: ".count)
+                let jsonString = String(line[jsonStart...])
+                
+                if let jsonData = jsonString.data(using: .utf8) {
+                    do {
+                        let decoder = JSONDecoder()
+                        let logEntry = try decoder.decode(JobLogEntry.self, from: jsonData)
+                        
+                        // Skip "Job started" messages as per streaming implementation
+                        if !logEntry.data.hasPrefix("===== Job started") {
+                            let timestampString = logEntry.timestamp ?? ""
+                            logEntries.append(LogEntry(timestamp: timestampString, message: logEntry.data))
+                        }
+                    } catch {
+                        print("❌ Error decoding non-streaming log JSON: \(error)")
+                        // Fallback to raw line if JSON parsing fails
+                        logEntries.append(LogEntry(timestamp: "", message: line))
+                    }
+                }
+            } else if line == "event: log" || line == ": keep-alive" {
+                // Skip SSE event markers and keep-alive
+                continue
             } else {
-                // If we can't parse a timestamp, just use the whole line as the message
-                logEntries.append(LogEntry(timestamp: "", message: line))
+                // Try to parse as space-separated timestamp + message format (legacy)
+                let components = line.components(separatedBy: " ")
+                if components.count >= 2 {
+                    let timestamp = components[0]
+                    let message = components.dropFirst().joined(separator: " ")
+                    logEntries.append(LogEntry(timestamp: timestamp, message: message))
+                } else {
+                    // Use the whole line as the message
+                    logEntries.append(LogEntry(timestamp: "", message: line))
+                }
             }
         }
         
