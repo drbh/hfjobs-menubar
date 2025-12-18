@@ -56,9 +56,18 @@ class JobService {
                 throw JobServiceError.httpError(httpResponse.statusCode)
             }
 
-            let jobs = try JSONDecoder().decode([HFJob].self, from: data)
-            
-            return jobs
+            do {
+                let jobs = try JSONDecoder().decode([HFJob].self, from: data)
+                return jobs
+            } catch let decodingError {
+                // Print detailed decoding error for debugging
+                print("❌ JSON Decoding Error: \(decodingError)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Raw API Response (first 2000 chars):")
+                    print(String(jsonString.prefix(2000)))
+                }
+                throw JobServiceError.decodingError(decodingError)
+            }
         } catch let error as JobServiceError {
             throw error
         } catch let error as URLError {

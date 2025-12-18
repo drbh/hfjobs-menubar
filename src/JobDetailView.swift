@@ -725,8 +725,8 @@ struct JobDetailView: View {
                 }
                 
                 // Row 3: Timeout (if available)
-                if let timeoutSeconds = job.timeoutSeconds {
-                    detailItem(label: "Timeout", value: "\(timeoutSeconds)s")
+                if let timeout = job.timeout {
+                    detailItem(label: "Timeout", value: "\(timeout)s")
                 }
                 
                 // Command (spans 2 columns)

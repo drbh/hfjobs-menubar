@@ -1,4 +1,4 @@
-.PHONY: all build build-universal build-intel build-arm asset-catalog sign run clean store-credentials notarize staple package
+.PHONY: all build build-universal build-intel build-arm asset-catalog sign run dev clean store-credentials notarize staple package
 
 # Default target that builds for current architecture
 all: build asset-catalog sign
@@ -34,10 +34,12 @@ build:
 		src/JobService.swift \
 		src/LogsStreamService.swift \
 		src/MetricsService.swift \
+		src/JobEventsService.swift \
 		src/MetricsObservable.swift \
 		src/LogsObservable.swift \
 		src/LogsViewComponents.swift \
 		src/MetricsViewComponents.swift \
+		src/JobEventsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \
@@ -55,10 +57,12 @@ build-intel:
 		src/JobService.swift \
 		src/LogsStreamService.swift \
 		src/MetricsService.swift \
+		src/JobEventsService.swift \
 		src/MetricsObservable.swift \
 		src/LogsObservable.swift \
 		src/LogsViewComponents.swift \
 		src/MetricsViewComponents.swift \
+		src/JobEventsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \
@@ -76,10 +80,12 @@ build-arm:
 		src/JobService.swift \
 		src/LogsStreamService.swift \
 		src/MetricsService.swift \
+		src/JobEventsService.swift \
 		src/MetricsObservable.swift \
 		src/LogsObservable.swift \
 		src/LogsViewComponents.swift \
 		src/MetricsViewComponents.swift \
+		src/JobEventsViewComponents.swift \
 		src/NotificationService.swift \
 		src/JobDetailView.swift \
 		src/HFJobs.swift \
@@ -167,6 +173,31 @@ staple:
 	@echo "📎 Stapling notarization ticket..."
 	@xcrun stapler staple $(APP_NAME).zip
 	@echo "📎 Stapled. Ready to distribute."
+
+# Quick dev build and run (no signing, no asset catalog)
+dev:
+	@echo "🔨 Dev build for architecture: $(ARCH)"
+	@mkdir -p HFJobs.app/Contents/MacOS
+	@mkdir -p HFJobs.app/Contents/Resources
+	@swiftc -g -Onone -target $(ARCH)-apple-macosx14.0 -o HFJobs.app/Contents/MacOS/HFJobs -parse-as-library \
+		src/Models.swift \
+		src/JobService.swift \
+		src/LogsStreamService.swift \
+		src/MetricsService.swift \
+		src/JobEventsService.swift \
+		src/MetricsObservable.swift \
+		src/LogsObservable.swift \
+		src/LogsViewComponents.swift \
+		src/MetricsViewComponents.swift \
+		src/JobEventsViewComponents.swift \
+		src/NotificationService.swift \
+		src/JobDetailView.swift \
+		src/HFJobs.swift \
+		src/main.swift
+	@chmod +x HFJobs.app/Contents/MacOS/HFJobs
+	@cp src/Info.plist HFJobs.app/Contents/
+	@echo "🚀 Running in dev mode..."
+	./HFJobs.app/Contents/MacOS/HFJobs
 
 # Build and run
 run: build asset-catalog sign

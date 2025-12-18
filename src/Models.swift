@@ -15,29 +15,44 @@ struct HFJob: Codable, Equatable, Identifiable {
     struct Owner: Codable, Equatable {
         let id: String
         let name: String
+        let type: String?
+        let avatarUrl: String?
     }
-    
+
+    struct CreatedBy: Codable, Equatable {
+        let id: String
+        let name: String
+    }
+
+    struct Initiator: Codable, Equatable {
+        let id: String
+        let name: String
+        let type: String?
+        let avatarUrl: String?
+    }
+
     struct Status: Codable, Equatable {
         var stage: String
         let message: String?
+        let failureCount: Int?
     }
-    
-    struct SecretValue: Codable, Equatable {
-        var encrypted: String
-        let keyId: String?
-    }
-    
+
+    let type: String?
     let id: String
     let owner: Owner
     let createdAt: String
+    let createdBy: CreatedBy?
+    let tags: [String]?
     let spaceId: String?
     let dockerImage: String?
     let environment: [String: String]?
-    let secrets: [String: SecretValue]?
+    let secrets: [String]?
     let arguments: [String]?
     let command: [String]
     let flavor: String
-    let timeoutSeconds: Int?
+    let arch: String?
+    let timeout: Int?
+    let initiator: Initiator?
     var status: Status
     
     // Helper computed properties
