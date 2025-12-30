@@ -26,7 +26,7 @@ struct HFJob: Codable, Equatable, Identifiable {
 
     struct Initiator: Codable, Equatable {
         let id: String
-        let name: String
+        let name: String?
         let type: String?
         let avatarUrl: String?
     }
