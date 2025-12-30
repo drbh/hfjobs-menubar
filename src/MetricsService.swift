@@ -50,7 +50,7 @@ struct HFJobMetrics: Codable, Equatable {
     
     // Helper formatting functions
     private func formatBytes(_ bytes: Int) -> String {
-        let units = ["B", "KB", "MB", "GB", "TB"]
+        let units = ["B", "KiB", "MiB", "GiB", "TiB"]
         var convertedValue = Double(bytes)
         var unitIndex = 0
         
@@ -118,7 +118,7 @@ struct GPUMetrics: Codable, Equatable {
     
     // Helper formatting function
     private func formatBytes(_ bytes: Int) -> String {
-        let units = ["B", "KB", "MB", "GB", "TB"]
+        let units = ["B", "KiB", "MiB", "GiB", "TiB"]
         var convertedValue = Double(bytes)
         var unitIndex = 0
         
