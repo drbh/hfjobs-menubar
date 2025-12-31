@@ -48,7 +48,7 @@ open HFJobs.app
 
 ```bash
 export HF_TOKEN=hf_
-uvx hfjobs run ubuntu bash -c "for i in {1..10}; do whoami; date; sleep 3; done"
+uvx hf jobs run ubuntu bash -c "for i in {1..10}; do whoami; date; sleep 3; done"
 ```
 
 # Screenshots
